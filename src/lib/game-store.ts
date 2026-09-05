@@ -3,8 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { buildRoles, generateRoomCode, getLivingPlayers, getMafiaAlive, getVillagerAlive, type GameState } from "@/lib/game";
 
-const dbDir = path.join(process.cwd(), "data");
-const dbPath = path.join(dbDir, "mafia.db");
+const dbPath =
+  process.env.SQLITE_DB_PATH ||
+  (process.env.NODE_ENV === "production"
+    ? path.join("/tmp", "mafia.db")
+    : path.join(process.cwd(), "data", "mafia.db"));
+const dbDir = path.dirname(dbPath);
 fs.mkdirSync(dbDir, { recursive: true });
 
 const db = new Database(dbPath);

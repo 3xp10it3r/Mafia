@@ -45,6 +45,7 @@ export default function Home() {
   const [roomSearch, setRoomSearch] = useState("");
   const [roomFilterStatus, setRoomFilterStatus] = useState<"all" | "locked" | "active" | "finished">("all");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [showRules, setShowRules] = useState(false);
   const socketRef = useRef<Socket | null>(null);
 
   async function fetchLobbyRooms() {
@@ -61,6 +62,10 @@ export default function Home() {
     if (typeof window === "undefined") {
       return;
     }
+    const rulesTimer =
+      window.localStorage.getItem("mafia-rules-seen") !== "true"
+        ? window.setTimeout(() => setShowRules(true), 0)
+        : undefined;
     const savedCode = window.localStorage.getItem("mafia-room-code");
     const savedName = window.localStorage.getItem("mafia-player-name");
     const savedPassword = window.localStorage.getItem("mafia-room-password") ?? "";
@@ -124,7 +129,17 @@ export default function Home() {
           setFieldErrors({ joinCode: "Unable to restore this room right now." });
         });
     }
+    return () => {
+      if (rulesTimer !== undefined) {
+        window.clearTimeout(rulesTimer);
+      }
+    };
   }, []);
+
+  function dismissRules() {
+    window.localStorage.setItem("mafia-rules-seen", "true");
+    setShowRules(false);
+  }
 
   useEffect(() => {
     if (typeof window !== "undefined" && game?.code) {
@@ -567,6 +582,55 @@ export default function Home() {
           </div>
         </header>
 
+        {showRules ? (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/85 p-3 backdrop-blur-md sm:p-6" role="dialog" aria-modal="true" aria-labelledby="rules-title">
+            <section className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-amber-400/30 bg-slate-900 shadow-2xl shadow-black/50">
+              <div className="flex items-start justify-between gap-4 border-b border-white/10 p-5 sm:p-7">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.3em] text-amber-300">Welcome to Mafia Game</p>
+                  <h2 id="rules-title" className="mt-2 text-2xl font-black text-white sm:text-4xl">How to play</h2>
+                </div>
+                <button type="button" onClick={dismissRules} aria-label="Close game rules" className="rounded-xl border border-slate-700 px-3 py-2 text-xl text-slate-300 hover:border-amber-400 hover:text-white">
+                  ×
+                </button>
+              </div>
+              <div className="overflow-y-auto p-5 sm:p-7">
+                <div className="space-y-6 text-sm leading-7 text-slate-300 sm:text-base">
+                  <div>
+                    <h3 className="font-bold text-white">1. Create or join a private room</h3>
+                    <p>Create a room with a password, choose the number of Mafia players, and share the room code and password with your friends. Everyone joins the lobby using their own name.</p>
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-white">2. Start the game</h3>
+                    <p>The moderator waits until everyone is in the lobby, then starts the game. Roles are assigned secretly and randomly. The moderator has no special role knowledge after the game starts.</p>
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-white">3. Mafia turn</h3>
+                    <p>The Mafia player quietly touches the player they want to eliminate, then selects that player in the app. The selected player is removed and the village vote begins.</p>
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-white">4. Physical-play innocent check</h3>
+                    <p>Because everyone is sharing one device, villagers must not see the Mafia target list. During the Mafia turn, each villager sees only their own name and can tap <strong className="text-emerald-200">I&apos;m innocent</strong>. This gives the Mafia a private way to identify their target without exposing other players&apos; choices.</p>
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-white">5. Village vote</h3>
+                    <p>After the Mafia action, discuss in person. Every living player votes for one suspect. The player with the most votes is eliminated; ties do not eliminate anyone.</p>
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-white">6. Winning and leaving</h3>
+                    <p>Villagers win when every Mafia player is eliminated. Mafia wins when Mafia equals or outnumbers the living villagers. If a Mafia player or the moderator quits, the game ends immediately. Any player can quit after confirming.</p>
+                  </div>
+                </div>
+              </div>
+              <div className="border-t border-white/10 p-5 sm:p-7">
+                <button type="button" onClick={dismissRules} className="w-full rounded-2xl bg-gradient-to-r from-amber-400 to-orange-500 px-5 py-3 font-bold text-slate-950 shadow-lg shadow-amber-950/30">
+                  I understand — start playing
+                </button>
+              </div>
+            </section>
+          </div>
+        ) : null}
+
         {!game ? (
           <section className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
             <div className="rounded-3xl border border-amber-400/20 bg-slate-900/70 p-5 shadow-[0_18px_50px_rgba(15,23,42,0.45)] backdrop-blur-sm transition-all duration-500 hover:border-amber-400/45 hover:shadow-[0_18px_60px_rgba(251,191,36,0.08)] sm:p-6">
@@ -779,17 +843,19 @@ export default function Home() {
               </div>
 
               <div className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-slate-950/20 sm:p-6">
-                <h3 className="text-xl font-bold text-white">Game flow</h3>
+                <h3 className="text-xl font-bold text-white">How Mafia Game works</h3>
                 <ul className="mt-4 space-y-3 text-sm leading-7 text-slate-300">
-                  <li>• Randomly assign mafia and townsfolk roles.</li>
-                  <li>• In God mode, the moderator sees every role at once.</li>
-                  <li>• In no-God mode, there is no permanent moderator.</li>
-                  <li>• Mafia silently chooses a target each night.</li>
-                  <li>• The town votes to eliminate the most suspicious player.</li>
-                  <li>• Highest vote count gets removed; mafia can win by outnumbering the village.</li>
+                  <li>• Create a password-protected room and share its code with your friends.</li>
+                  <li>• Everyone joins the lobby; the moderator starts once all players are ready.</li>
+                  <li>• Roles are randomly assigned when the game starts and stay hidden.</li>
+                  <li>• Mafia secretly touches one player and records the target in the app.</li>
+                  <li>• During the physical Mafia turn, villagers tap only <strong className="text-emerald-200">I&apos;m innocent</strong> on their own device view. This prevents villagers from seeing or guessing the Mafia target list.</li>
+                  <li>• The living players discuss and vote. The highest vote eliminates a player; ties mean nobody is eliminated.</li>
+                  <li>• Villagers win by eliminating all Mafia. Mafia wins when they equal or outnumber the villagers.</li>
+                  <li>• Any player can quit after confirmation. If Mafia or the moderator quits, the game ends.</li>
                 </ul>
                 <div className="mt-6 rounded-2xl border border-sky-400/20 bg-sky-500/10 p-4 text-sm text-sky-100">
-                  <span className="font-semibold">Status:</span> {notice}
+                  <span className="font-semibold">Physical-play tip:</span> pass the device around one player at a time so nobody sees another player&apos;s private action.
                 </div>
               </div>
             </div>

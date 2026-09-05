@@ -609,8 +609,8 @@ export default function Home() {
                     <p>The Mafia player quietly touches the player they want to eliminate, then selects that player in the app. The selected player is removed and the village vote begins.</p>
                   </div>
                   <div>
-                    <h3 className="font-bold text-white">4. Physical-play innocent check</h3>
-                    <p>Because everyone is sharing one device, villagers must not see the Mafia target list. During the Mafia turn, each villager sees only their own name and can tap <strong className="text-emerald-200">I&apos;m innocent</strong>. This gives the Mafia a private way to identify their target without exposing other players&apos; choices.</p>
+                    <h3 className="font-bold text-white">4. Innocent check</h3>
+                    <p>During the Mafia turn, villagers tap only <strong className="text-emerald-200">I&apos;m innocent</strong> on their own device view. This prevents villagers from seeing or guessing the Mafia as he will touch his device.</p>
                   </div>
                   <div>
                     <h3 className="font-bold text-white">5. Village vote</h3>
@@ -849,14 +849,11 @@ export default function Home() {
                   <li>• Everyone joins the lobby; the moderator starts once all players are ready.</li>
                   <li>• Roles are randomly assigned when the game starts and stay hidden.</li>
                   <li>• Mafia secretly touches one player and records the target in the app.</li>
-                  <li>• During the physical Mafia turn, villagers tap only <strong className="text-emerald-200">I&apos;m innocent</strong> on their own device view. This prevents villagers from seeing or guessing the Mafia target list.</li>
+                  <li>• During the Mafia turn, villagers tap only <strong className="text-emerald-200">I&apos;m innocent</strong> on their own device view. This prevents villagers from seeing or guessing the Mafia as he will touch his device.</li>
                   <li>• The living players discuss and vote. The highest vote eliminates a player; ties mean nobody is eliminated.</li>
                   <li>• Villagers win by eliminating all Mafia. Mafia wins when they equal or outnumber the villagers.</li>
                   <li>• Any player can quit after confirmation. If Mafia or the moderator quits, the game ends.</li>
                 </ul>
-                <div className="mt-6 rounded-2xl border border-sky-400/20 bg-sky-500/10 p-4 text-sm text-sky-100">
-                  <span className="font-semibold">Physical-play tip:</span> pass the device around one player at a time so nobody sees another player&apos;s private action.
-                </div>
               </div>
             </div>
           </section>
@@ -1007,12 +1004,6 @@ export default function Home() {
                   <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Phase</p>
                   <h2 className="mt-2 text-lg font-bold text-white sm:text-xl">{game.phase}</h2>
                 </div>
-              </div>
-            ) : null}
-
-            {game.physicalMode ? (
-              <div className="rounded-2xl border border-amber-400/30 bg-amber-500/10 p-4 text-sm text-amber-100">
-                Same-room physical play is enabled. Villagers choose the innocent suspect while mafia picks the kill target.
               </div>
             ) : null}
 

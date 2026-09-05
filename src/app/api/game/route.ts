@@ -37,13 +37,11 @@ export async function POST(request: Request) {
 
     if (action === "create") {
       const room = createGame({
-        roomName: payload.roomName,
         mode: "without-god",
         mafiaCount: payload.mafiaCount,
         moderatorName: payload.moderatorName,
         players: Array.isArray(payload.players) ? payload.players : [],
         password: payload.password,
-        physicalMode: payload.physicalMode,
       });
 
       const socketServer = (globalThis as typeof globalThis & { __mafiaSocketServer?: { to: (roomCode: string) => { emit: (event: string, data: unknown) => void } } }).__mafiaSocketServer;
@@ -55,6 +53,9 @@ export async function POST(request: Request) {
       const room = getGameByCode(payload.roomCode);
       if (!room) {
         return NextResponse.json({ error: "Room code not found.", field: "joinCode" }, { status: 404, headers: noStore });
+      }
+      if (typeof payload.password !== "string" || !payload.password.trim()) {
+        return NextResponse.json({ error: "Room password is required.", field: "joinPassword" }, { status: 400, headers: noStore });
       }
       if (room.password && room.password !== (payload.password ?? "")) {
         return NextResponse.json({ error: "Incorrect room password.", field: "joinPassword" }, { status: 401, headers: noStore });

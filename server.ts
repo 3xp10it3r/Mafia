@@ -44,7 +44,12 @@ app.prepare().then(() => {
           return;
         }
 
-        if (room.password && room.password !== (password ?? "")) {
+        if (!password?.trim()) {
+          socket.emit("room:error", { message: "Room password is required." });
+          return;
+        }
+
+        if (!room.password || room.password !== password) {
           socket.emit("room:error", { message: "Incorrect room password." });
           return;
         }

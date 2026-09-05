@@ -4,12 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import type { GameState } from "@/lib/game";
 
-const normalizePlayers = (value: string) =>
-  value
-    .split(/\n|,/) 
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-
 const confettiPieces = [
   { emoji: "✨", left: "8%", delay: "0s" },
   { emoji: "🎉", left: "18%", delay: "0.3s" },
@@ -40,7 +34,6 @@ export default function Home() {
   const [roomPassword, setRoomPassword] = useState("");
   const [joinPassword, setJoinPassword] = useState("");
   const [mafiaCount, setMafiaCount] = useState(1);
-  const [physicalMode, setPhysicalMode] = useState(false);
   const [myName, setMyName] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [joinName, setJoinName] = useState("");
@@ -50,8 +43,7 @@ export default function Home() {
   const [isBusy, setIsBusy] = useState(false);
   const [lobbyRooms, setLobbyRooms] = useState<GameState[]>([]);
   const [roomSearch, setRoomSearch] = useState("");
-  const [roomFilterMode, setRoomFilterMode] = useState<"all" | "with-god" | "without-god">("all");
-  const [roomFilterStatus, setRoomFilterStatus] = useState<"all" | "open" | "locked" | "active" | "finished">("all");
+  const [roomFilterStatus, setRoomFilterStatus] = useState<"all" | "locked" | "active" | "finished">("all");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const socketRef = useRef<Socket | null>(null);
 
@@ -73,6 +65,8 @@ export default function Home() {
     const savedName = window.localStorage.getItem("mafia-player-name");
     const savedPassword = window.localStorage.getItem("mafia-room-password") ?? "";
     if (savedCode && savedName) {
+      // Restore the browser session before reconnecting the live room.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setJoinCode(savedCode);
       setJoinName(savedName);
       setMyName(savedName);
@@ -189,6 +183,15 @@ export default function Home() {
       !game.votedPlayers.includes(currentPlayer.name) &&
       game.winner === null,
   );
+  const canDeclareInnocent = Boolean(
+    game &&
+      currentPlayer &&
+      game.physicalMode &&
+      currentPlayer.isAlive &&
+      currentPlayer.role === "villager" &&
+      game.phase === "mafia-turn" &&
+      game.winner === null,
+  );
 
   useEffect(() => {
     const refreshLobby = () => {
@@ -289,6 +292,9 @@ export default function Home() {
     if (mafiaCount < 1) {
       nextErrors.mafiaCount = "At least 1 mafia is required.";
     }
+    if (!roomPassword.trim()) {
+      nextErrors.roomPassword = "A room password is required.";
+    }
 
     setFieldErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) {
@@ -303,13 +309,12 @@ export default function Home() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         action: "create",
-        roomName: "Mafia Room",
         mode: "without-god",
         mafiaCount,
         moderatorName: nextName,
         players: [],
         password: roomPassword.trim() || undefined,
-        physicalMode,
+        physicalMode: true,
       }),
     });
 
@@ -347,6 +352,9 @@ export default function Home() {
     }
     if (!nextName) {
       nextErrors.joinName = "Enter your player name.";
+    }
+    if (!joinPassword.trim()) {
+      nextErrors.joinPassword = "A room password is required.";
     }
 
     setFieldErrors(nextErrors);
@@ -457,12 +465,15 @@ export default function Home() {
             ? `Moderator rights transferred to ${targetOverride}.`
           : action === "mafia-kill"
             ? `${currentPlayer.name} targeted ${targetOverride ?? targetChoice}.`
+            : action === "village-vote" && targetOverride === currentPlayer.name
+              ? `${currentPlayer.name} declared they are innocent.`
             : `${currentPlayer.name} voted against ${targetOverride ?? targetChoice}.`,
     );
   }
 
   async function leaveRoom() {
     if (!game || !currentPlayer || isBusy) return;
+    if (!window.confirm("Are you sure you want to quit the game?")) return;
     setIsBusy(true);
     const response = await fetch("/api/game", {
       method: "POST",
@@ -481,29 +492,7 @@ export default function Home() {
     window.localStorage.removeItem("mafia-room-snapshot");
     setGame(null);
     setMyName("");
-    setNotice(payload.closed ? "You left the room." : "You left the room.");
-  }
-
-  async function closeRoom() {
-    if (!game || !currentPlayer || isBusy) return;
-    setIsBusy(true);
-    const response = await fetch("/api/game", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "quit-room", roomCode: game.code, actor: currentPlayer.name }),
-    });
-    const payload = await response.json();
-    setIsBusy(false);
-    if (payload.error) {
-      setNotice(payload.error);
-      return;
-    }
-    window.localStorage.removeItem("mafia-room-code");
-    window.localStorage.removeItem("mafia-player-name");
-    window.localStorage.removeItem("mafia-room-password");
-    window.localStorage.removeItem("mafia-room-snapshot");
-    setGame(null);
-    setNotice("The room was closed for everyone.");
+    setNotice(payload.closed ? "The game ended because a player left." : "You left the room.");
   }
 
   const generalSummary = useMemo(() => {
@@ -527,19 +516,17 @@ export default function Home() {
         room.code.toLowerCase().includes(query) ||
         room.players.some((player) => player.name.toLowerCase().includes(query));
 
-      const matchesMode = roomFilterMode === "all" || room.mode === roomFilterMode;
       const roomHasPassword = Boolean(room.password);
       const roomIsActive = room.winner === null;
       const matchesStatus =
         roomFilterStatus === "all" ||
-        (roomFilterStatus === "open" && !roomHasPassword) ||
         (roomFilterStatus === "locked" && roomHasPassword) ||
         (roomFilterStatus === "active" && roomIsActive) ||
         (roomFilterStatus === "finished" && !roomIsActive);
 
-      return matchesSearch && matchesMode && matchesStatus;
+      return matchesSearch && matchesStatus;
     });
-  }, [lobbyRooms, roomFilterMode, roomFilterStatus, roomSearch]);
+  }, [lobbyRooms, roomFilterStatus, roomSearch]);
 
   const isNightPhase = game?.phase === "mafia-turn";
   const mafiaAliveCount = game ? game.players.filter((player) => player.isAlive && player.role === "mafia").length : 0;
@@ -558,7 +545,7 @@ export default function Home() {
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.32em] text-amber-300">Mafia game room</p>
-              <h1 className="mt-2 text-3xl font-black tracking-tight text-white sm:text-4xl">The Town of Shadows</h1>
+              <h1 className="mt-2 text-3xl font-black tracking-tight text-white sm:text-4xl">Mafia Game</h1>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               {notice ? (
@@ -620,22 +607,14 @@ export default function Home() {
                     <input
                       type="password"
                       value={roomPassword}
-                      onChange={(event) => setRoomPassword(event.target.value)}
-                      className="w-full rounded-2xl border border-slate-700 bg-slate-950/70 px-4 py-3 text-white outline-none transition duration-200 focus:border-amber-400 focus:ring-2 focus:ring-amber-500/30"
-                      placeholder="Optional"
+                      onChange={(event) => {
+                        setRoomPassword(event.target.value);
+                        if (fieldErrors.roomPassword) setFieldErrors((current) => ({ ...current, roomPassword: "" }));
+                      }}
+                      className={`w-full rounded-2xl border bg-slate-950/70 px-4 py-3 text-white outline-none transition duration-200 focus:ring-2 ${fieldErrors.roomPassword ? "border-red-400 focus:border-red-400 focus:ring-red-500/30" : "border-slate-700 focus:border-amber-400 focus:ring-amber-500/30"}`}
+                      placeholder="Enter a room password"
                     />
-                  </div>
-
-                  <div className="flex items-end">
-                    <label className="flex w-full items-center justify-between rounded-2xl border border-slate-700 bg-slate-950/70 px-4 py-3 text-sm text-slate-200">
-                      <span>Physical play</span>
-                      <input
-                        type="checkbox"
-                        checked={physicalMode}
-                        onChange={(event) => setPhysicalMode(event.target.checked)}
-                        className="h-4 w-4 accent-amber-500"
-                      />
-                    </label>
+                    {fieldErrors.roomPassword ? <p className="mt-2 text-sm text-red-300">{fieldErrors.roomPassword}</p> : null}
                   </div>
                 </div>
 
@@ -690,10 +669,14 @@ export default function Home() {
                     <input
                       type="password"
                       value={joinPassword}
-                      onChange={(event) => setJoinPassword(event.target.value)}
-                      className="w-full rounded-2xl border border-slate-700 bg-slate-950/70 px-4 py-3 text-white outline-none transition duration-200 focus:border-sky-400 focus:ring-2 focus:ring-sky-500/30"
-                      placeholder="Optional for public rooms"
+                      onChange={(event) => {
+                        setJoinPassword(event.target.value);
+                        if (fieldErrors.joinPassword) setFieldErrors((current) => ({ ...current, joinPassword: "" }));
+                      }}
+                      className={`w-full rounded-2xl border bg-slate-950/70 px-4 py-3 text-white outline-none transition duration-200 focus:ring-2 ${fieldErrors.joinPassword ? "border-red-400 focus:border-red-400 focus:ring-red-500/30" : "border-slate-700 focus:border-sky-400 focus:ring-sky-500/30"}`}
+                      placeholder="Enter the room password"
                     />
+                    {fieldErrors.joinPassword ? <p className="mt-2 text-sm text-red-300">{fieldErrors.joinPassword}</p> : null}
                   </div>
 
                   <button
@@ -727,22 +710,11 @@ export default function Home() {
                   />
 
                   <select
-                    value={roomFilterMode}
-                    onChange={(event) => setRoomFilterMode(event.target.value as "all" | "with-god" | "without-god")}
-                    className="rounded-2xl border border-slate-700 bg-slate-950/80 px-3 py-2 text-sm text-white outline-none transition duration-200 focus:border-amber-400 focus:ring-2 focus:ring-amber-500/30"
-                  >
-                    <option value="all">All modes</option>
-                    <option value="with-god">With God</option>
-                    <option value="without-god">Without God</option>
-                  </select>
-
-                  <select
                     value={roomFilterStatus}
-                    onChange={(event) => setRoomFilterStatus(event.target.value as "all" | "open" | "locked" | "active" | "finished")}
+                    onChange={(event) => setRoomFilterStatus(event.target.value as "all" | "locked" | "active" | "finished")}
                     className="rounded-2xl border border-slate-700 bg-slate-950/80 px-3 py-2 text-sm text-white outline-none transition duration-200 focus:border-amber-400 focus:ring-2 focus:ring-amber-500/30"
                   >
                     <option value="all">All rooms</option>
-                    <option value="open">Open</option>
                     <option value="locked">Locked</option>
                     <option value="active">In progress</option>
                     <option value="finished">Finished</option>
@@ -752,7 +724,6 @@ export default function Home() {
                     type="button"
                     onClick={() => {
                       setRoomSearch("");
-                      setRoomFilterMode("all");
                       setRoomFilterStatus("all");
                     }}
                     className="rounded-2xl border border-slate-700 bg-slate-950/80 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-sky-400 hover:text-sky-200"
@@ -939,12 +910,14 @@ export default function Home() {
                       </div>
                     </div>
 
-                    {isModerator ? (
+                    {game && currentPlayer ? (
                       <div className="flex flex-col justify-end gap-3 sm:flex-row">
+                        {isModerator ? (
                         <button type="button" onClick={() => void runAction("restart")} className="rounded-2xl bg-gradient-to-r from-emerald-400 to-cyan-500 px-5 py-3 font-bold text-slate-950 shadow-lg shadow-emerald-900/30">
                           New game
                         </button>
-                        <button type="button" onClick={() => void closeRoom()} className="rounded-2xl border border-red-400/40 bg-red-500/15 px-5 py-3 font-bold text-red-100">
+                        ) : null}
+                        <button type="button" onClick={() => void leaveRoom()} className="rounded-2xl border border-red-400/40 bg-red-500/15 px-5 py-3 font-bold text-red-100">
                           Quit game
                         </button>
                       </div>
@@ -1056,12 +1029,7 @@ export default function Home() {
                     Start new game
                   </button>
                 ) : null}
-                {game.phase !== "lobby" && currentPlayer && currentPlayer.role !== "mafia" && currentPlayer.isAlive ? (
-                  <button type="button" onClick={() => void leaveRoom()} className="rounded-2xl border border-red-400/30 bg-red-500/10 px-5 py-3 font-bold text-red-100">
-                    Quit game
-                  </button>
-                ) : null}
-                {game.phase === "lobby" && currentPlayer && currentPlayer.name !== game.temporaryModerator ? (
+                {game && currentPlayer ? (
                   <button type="button" onClick={() => void leaveRoom()} className="rounded-2xl border border-red-400/30 bg-red-500/10 px-5 py-3 font-bold text-red-100">
                     Quit game
                   </button>
@@ -1150,6 +1118,17 @@ export default function Home() {
                     </div>
                   ) : null}
 
+                  {canDeclareInnocent ? (
+                    <button
+                      type="button"
+                      onClick={() => void runAction("village-vote", currentPlayer?.name)}
+                      disabled={isBusy}
+                      className="w-full rounded-2xl border border-emerald-400/40 bg-emerald-500/15 px-4 py-3 font-bold text-emerald-100 shadow-lg shadow-emerald-950/20 disabled:opacity-60"
+                    >
+                      I&apos;m innocent
+                    </button>
+                  ) : null}
+
                   {canMafiaAct ? (
                     <div className="space-y-3">
                       <label className="block text-sm font-medium text-slate-200">Choose a target</label>
@@ -1173,6 +1152,27 @@ export default function Home() {
                       >
                         Confirm mafia kill
                       </button>
+                    </div>
+                  ) : null}
+
+                  {isModerator && game.phase !== "lobby" && game.winner === null ? (
+                    <div className="rounded-2xl border border-amber-400/20 bg-amber-500/10 p-4">
+                      <p className="text-xs uppercase tracking-[0.25em] text-amber-200">Moderator rights</p>
+                      <div className="mt-3 space-y-2">
+                        {game.players
+                          .filter((player) => player.isAlive && player.name !== currentPlayer?.name)
+                          .map((player) => (
+                            <button
+                              key={player.name}
+                              type="button"
+                              onClick={() => void runAction("transfer-moderator", player.name)}
+                              disabled={isBusy}
+                              className="mr-2 rounded-xl border border-amber-300/30 px-3 py-2 text-sm font-semibold text-amber-100 disabled:opacity-60"
+                            >
+                              Transfer to {player.name}
+                            </button>
+                          ))}
+                      </div>
                     </div>
                   ) : null}
 

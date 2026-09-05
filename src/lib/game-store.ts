@@ -93,7 +93,6 @@ export function createGame({
   moderatorName,
   players,
   password,
-  physicalMode,
 }: {
   roomName?: string;
   mode: "with-god" | "without-god";
@@ -101,11 +100,14 @@ export function createGame({
   moderatorName?: string;
   players?: string[];
   password?: string;
-  physicalMode?: boolean;
 }): GameState {
   const creatorName = (moderatorName ?? players?.[0] ?? "").trim();
   if (!creatorName) {
     throw new Error("A moderator name is required to create a room.");
+  }
+  const normalizedPassword = password?.trim() ?? "";
+  if (!normalizedPassword) {
+    throw new Error("A room password is required.");
   }
 
   const allNames = toUniqueNames([creatorName, ...(players ?? [])]);
@@ -140,8 +142,8 @@ export function createGame({
       mode === "with-god" ? `${creatorName} is the God moderator.` : `${creatorName} is the temporary moderator for this room.`,
     ],
     mafiaChat: [],
-    password: password?.trim() ? password.trim() : null,
-    physicalMode: Boolean(physicalMode),
+    password: normalizedPassword,
+    physicalMode: true,
     createdAt: now,
     updatedAt: now,
   };
@@ -291,8 +293,9 @@ export function leavePlayerFromRoom(roomCode: string, playerName: string): GameS
   if (!player) {
     throw new Error("Player is not in this room.");
   }
-  if (player.role === "mafia" && room.phase !== "lobby") {
-    throw new Error("Mafia players cannot quit during an active game.");
+  if (player.role === "mafia" || player.name === room.temporaryModerator) {
+    deleteRoom(room.code);
+    return null;
   }
 
   const remainingPlayers = room.players.filter((entry) => entry.name !== player.name);
@@ -322,14 +325,12 @@ export function applyAction({
   action,
   actor,
   target,
-  message,
 }: {
   roomId?: string;
   roomCode?: string;
   action: "mafia-kill" | "village-vote" | "restart" | "start-game" | "transfer-moderator";
   actor?: string;
   target?: string;
-  message?: string;
 }): GameState {
   const room = roomId ? getGameById(roomId) : roomCode ? getGameByCode(roomCode) : undefined;
   if (!room) {
@@ -452,7 +453,8 @@ export function applyAction({
     if (!actor || !target) {
       throw new Error("A voter and target are required.");
     }
-    if (room.phase !== "village-vote") {
+    const physicalInnocentDeclaration = room.physicalMode && room.phase === "mafia-turn";
+    if (room.phase !== "village-vote" && !physicalInnocentDeclaration) {
       throw new Error("Voting is only open during the village vote phase.");
     }
 
@@ -467,12 +469,21 @@ export function applyAction({
       throw new Error("The vote target must be alive.");
     }
 
-    if (actor === target) {
+    if (actor === target && !physicalInnocentDeclaration) {
       throw new Error("A player cannot vote for themselves.");
     }
 
-    if (room.votedPlayers.includes(actor)) {
+    if (!physicalInnocentDeclaration && room.votedPlayers.includes(actor)) {
       throw new Error("This player has already voted in this round.");
+    }
+
+    if (physicalInnocentDeclaration) {
+      if (player.role !== "villager" || target !== actor) {
+        throw new Error("Only villagers can declare themselves innocent.");
+      }
+      room.log.unshift(`${actor} declared themselves innocent.`);
+      room.updatedAt = new Date().toISOString();
+      return upsertRoom(room);
     }
 
     room.votesByPlayer[actor] = target;

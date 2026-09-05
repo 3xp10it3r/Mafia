@@ -1,5 +1,5 @@
 export type GameMode = "with-god" | "without-god";
-export type GamePhase = "mafia-turn" | "village-vote" | "game-over";
+export type GamePhase = "lobby" | "mafia-turn" | "village-vote" | "game-over";
 export type Role = "mafia" | "villager";
 
 export interface PlayerState {
@@ -48,7 +48,7 @@ export function shuffle<T>(items: T[]): T[] {
   return next;
 }
 
-const AVATAR_POOL = ["🦊", "🐺", "🦁", "🐼", "🐯", "🐰", "🦄", "🐨", "🐸", "🐵", "🦅", "🐔", "🐮", "🐲", "🦉"];
+export const AVATAR_POOL = ["🦊", "🐺", "🦁", "🐼", "🐯", "🐰", "🦄", "🐨", "🐸", "🐵", "🦅", "🐔", "🐮", "🐲", "🦉"];
 
 export function buildRoles(names: string[], mafiaCount: number): PlayerState[] {
   const uniqueNames = Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));

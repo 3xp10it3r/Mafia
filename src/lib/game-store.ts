@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
-import { buildRoles, generateRoomCode, getLivingPlayers, getMafiaAlive, getVillagerAlive, type GameState } from "@/lib/game";
+import { AVATAR_POOL, buildRoles, generateRoomCode, getLivingPlayers, getMafiaAlive, getVillagerAlive, type GameState } from "@/lib/game";
 
 const dbPath =
   process.env.SQLITE_DB_PATH ||
@@ -37,7 +37,7 @@ function toUniqueNames(names: string[]): string[] {
   );
 }
 
-function upsertRoom(room: GameState): GameState {
+export function upsertRoom(room: GameState): GameState {
   const payload = JSON.stringify(room);
   const statement = db.prepare(`
     INSERT INTO rooms (id, code, payload, created_at, updated_at)
@@ -86,44 +86,53 @@ export function createGame({
   roomName,
   mode,
   mafiaCount,
+  moderatorName,
   players,
   password,
   physicalMode,
 }: {
-  roomName: string;
+  roomName?: string;
   mode: "with-god" | "without-god";
   mafiaCount: number;
-  players: string[];
+  moderatorName?: string;
+  players?: string[];
   password?: string;
   physicalMode?: boolean;
 }): GameState {
-  const names = toUniqueNames(players);
-  if (names.length < 3) {
-    throw new Error("At least 3 unique player names are required to start a Mafia game.");
+  const creatorName = (moderatorName ?? players?.[0] ?? "").trim();
+  if (!creatorName) {
+    throw new Error("A moderator name is required to create a room.");
   }
 
-  const safeMafiaCount = Math.max(1, Math.min(mafiaCount || 1, names.length - 1));
+  const allNames = toUniqueNames([creatorName, ...(players ?? [])]);
+  const safeMafiaCount = Math.max(1, Math.min(mafiaCount || 1, Math.max(1, allNames.length - 1)));
   const id = `room-${Math.random().toString(36).slice(2, 9)}`;
   const now = new Date().toISOString();
-  const builtPlayers = buildRoles(names, safeMafiaCount);
+  const playerList: GameState["players"] = allNames.map((name) => ({
+    name,
+    role: "villager",
+    isAlive: true,
+    avatar: AVATAR_POOL[Math.abs(name.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0)) % AVATAR_POOL.length],
+  }));
+
   const room: GameState = {
     id,
     code: generateUniqueRoomCode(),
-    roomName: roomName.trim() || "Midnight Mafia Room",
+    roomName: (roomName ?? "Mafia Room").trim() || "Mafia Room",
     mode,
     mafiaCount: safeMafiaCount,
-    players: builtPlayers,
-    phase: "mafia-turn",
-    round: 1,
+    players: playerList,
+    phase: "lobby",
+    round: 0,
     winner: null,
-    godName: mode === "with-god" ? names[0] ?? null : null,
-    temporaryModerator: names[0] ?? null,
+    godName: mode === "with-god" ? creatorName : null,
+    temporaryModerator: creatorName,
     votesByPlayer: {},
     votedPlayers: [],
     pendingKillTarget: null,
     log: [
-      `${roomName.trim() || "Midnight Mafia Room"} has opened.`,
-      mode === "with-god" ? `${names[0]} is the God moderator.` : `${names[0]} is the temporary moderator for this room.`,
+      `${(roomName ?? "Mafia Room").trim() || "Mafia Room"} is waiting for players.`,
+      mode === "with-god" ? `${creatorName} is the God moderator.` : `${creatorName} is the temporary moderator for this room.`,
     ],
     mafiaChat: [],
     password: password?.trim() ? password.trim() : null,
@@ -216,6 +225,36 @@ function resolveVotes(room: GameState): void {
   finishRound(room);
 }
 
+export function joinPlayerToRoom(roomCode: string, playerName: string): GameState {
+  const room = getGameByCode(roomCode);
+  if (!room) {
+    throw new Error("Room not found.");
+  }
+  if (room.phase !== "lobby") {
+    throw new Error("This room has already started.");
+  }
+  if (room.players.some((player) => player.name === playerName)) {
+    return room;
+  }
+
+  const nextRoom: GameState = {
+    ...room,
+    players: [
+      ...room.players,
+      {
+        name: playerName,
+        role: "villager",
+        isAlive: true,
+        avatar: AVATAR_POOL[(room.players.length + room.players.length * 3) % AVATAR_POOL.length],
+      },
+    ],
+    log: [...room.log, `${playerName} joined the lobby.`],
+    updatedAt: new Date().toISOString(),
+  };
+
+  return upsertRoom(nextRoom);
+}
+
 export function applyAction({
   roomId,
   roomCode,
@@ -226,7 +265,7 @@ export function applyAction({
 }: {
   roomId?: string;
   roomCode?: string;
-  action: "mafia-kill" | "village-vote" | "restart" | "mafia-chat";
+  action: "mafia-kill" | "village-vote" | "restart" | "start-game";
   actor?: string;
   target?: string;
   message?: string;
@@ -240,7 +279,7 @@ export function applyAction({
     const names = room.players.map((player) => player.name);
     const restartedPlayers = buildRoles(names, room.mafiaCount).map((player) => {
       const previous = room.players.find((entry) => entry.name === player.name);
-      return { ...player, avatar: previous?.avatar ?? player.avatar };
+      return { ...player, avatar: previous?.avatar ?? player.avatar, isAlive: true, wasEliminated: false };
     });
 
     const restartedRoom: GameState = {
@@ -254,7 +293,7 @@ export function applyAction({
       pendingKillTarget: null,
       log: [
         `${room.roomName} has been reset. A new game is ready.`,
-        room.mode === "with-god" ? `${room.godName ?? names[0]} remains the God moderator.` : `${room.temporaryModerator ?? names[0]} starts as the temporary moderator.`,
+        room.mode === "with-god" ? `${room.godName ?? names[0]} remains the God moderator.` : `${room.temporaryModerator ?? names[0]} returns as a regular player.`,
       ],
       mafiaChat: [],
       updatedAt: new Date().toISOString(),
@@ -263,17 +302,33 @@ export function applyAction({
     return upsertRoom(restartedRoom);
   }
 
-  if (action === "mafia-chat") {
-    if (!actor || !message) {
-      throw new Error("A mafia player and message are required.");
+  if (action === "start-game") {
+    if (room.phase !== "lobby") {
+      throw new Error("The game has already started.");
     }
 
-    const sender = room.players.find((player) => player.name === actor);
-    if (!sender || sender.role !== "mafia") {
-      throw new Error("Only mafia players can send mafia chat messages.");
+    const names = room.players.map((player) => player.name);
+    if (names.length < 3) {
+      throw new Error("At least 3 players are required to start the game.");
     }
 
-    room.mafiaChat = [...room.mafiaChat, { sender: actor, message: message.trim(), sentAt: new Date().toISOString() }].slice(-20);
+    const safeMafiaCount = Math.max(1, Math.min(room.mafiaCount || 1, names.length - 1));
+    const assignedPlayers = buildRoles(names, safeMafiaCount).map((player) => {
+      const previous = room.players.find((entry) => entry.name === player.name);
+      return { ...player, avatar: previous?.avatar ?? player.avatar, isAlive: true, wasEliminated: false };
+    });
+
+    room.players = assignedPlayers;
+    room.phase = "mafia-turn";
+    room.round = 1;
+    room.winner = null;
+    room.votesByPlayer = {};
+    room.votedPlayers = [];
+    room.pendingKillTarget = null;
+    room.log = [
+      `${room.roomName} has started. Roles are now in play.`,
+      room.mode === "with-god" ? `${room.godName ?? room.players[0]?.name ?? "Moderator"} can observe every role.` : "No permanent moderator has special powers during the game.",
+    ];
     room.updatedAt = new Date().toISOString();
     return upsertRoom(room);
   }

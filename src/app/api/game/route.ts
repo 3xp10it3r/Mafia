@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { applyAction, createGame, getGameByCode, getGameById, listGames } from "@/lib/game-store";
+import { applyAction, createGame, getGameByCode, getGameById, joinPlayerToRoom, listGames } from "@/lib/game-store";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -35,10 +35,14 @@ export async function POST(request: Request) {
         roomName: payload.roomName,
         mode: payload.mode,
         mafiaCount: payload.mafiaCount,
-        players: payload.players,
+        moderatorName: payload.moderatorName,
+        players: Array.isArray(payload.players) ? payload.players : [],
         password: payload.password,
         physicalMode: payload.physicalMode,
       });
+
+      const socketServer = (globalThis as typeof globalThis & { __mafiaSocketServer?: { to: (roomCode: string) => { emit: (event: string, data: unknown) => void } } }).__mafiaSocketServer;
+      socketServer?.to(room.code).emit("room:update", room);
       return NextResponse.json(room);
     }
 
@@ -50,14 +54,20 @@ export async function POST(request: Request) {
       if (room.password && room.password !== (payload.password ?? "")) {
         return NextResponse.json({ error: "Incorrect room password." }, { status: 401 });
       }
-      if (!room.players.some((player) => player.name === payload.playerName)) {
-        return NextResponse.json({ error: "That player name is not in this room." }, { status: 400 });
+      if (!payload.playerName?.trim()) {
+        return NextResponse.json({ error: "Player name is required." }, { status: 400 });
       }
-      return NextResponse.json(room);
+
+      const nextRoom = joinPlayerToRoom(room.code, payload.playerName.trim());
+      const socketServer = (globalThis as typeof globalThis & { __mafiaSocketServer?: { to: (roomCode: string) => { emit: (event: string, data: unknown) => void } } }).__mafiaSocketServer;
+      socketServer?.to(room.code).emit("room:update", nextRoom);
+      return NextResponse.json(nextRoom);
     }
 
-    if (action === "mafia-kill" || action === "village-vote" || action === "restart" || action === "mafia-chat") {
+    if (action === "mafia-kill" || action === "village-vote" || action === "restart" || action === "start-game") {
       const room = applyAction(payload);
+      const socketServer = (globalThis as typeof globalThis & { __mafiaSocketServer?: { to: (roomCode: string) => { emit: (event: string, data: unknown) => void } } }).__mafiaSocketServer;
+      socketServer?.to(room.code).emit("room:update", room);
       return NextResponse.json(room);
     }
 

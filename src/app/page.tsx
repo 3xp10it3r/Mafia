@@ -37,26 +37,24 @@ const winnerBadgeLabel = {
 };
 
 export default function Home() {
-  const [roomName, setRoomName] = useState("Midnight Mafia");
+  const [roomName, setRoomName] = useState("Mafia Room");
   const [roomPassword, setRoomPassword] = useState("");
   const [joinPassword, setJoinPassword] = useState("");
   const [mode, setMode] = useState<GameMode>("with-god");
   const [mafiaCount, setMafiaCount] = useState(2);
   const [physicalMode, setPhysicalMode] = useState(false);
-  const [playersText, setPlayersText] = useState("");
   const [myName, setMyName] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [joinName, setJoinName] = useState("");
   const [game, setGame] = useState<GameState | null>(null);
-  const [selectedPlayer, setSelectedPlayer] = useState("");
   const [notice, setNotice] = useState("Create or join a room to begin.");
   const [targetChoice, setTargetChoice] = useState("");
-  const [mafiaChatDraft, setMafiaChatDraft] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [lobbyRooms, setLobbyRooms] = useState<GameState[]>([]);
   const [roomSearch, setRoomSearch] = useState("");
   const [roomFilterMode, setRoomFilterMode] = useState<"all" | "with-god" | "without-god">("all");
   const [roomFilterStatus, setRoomFilterStatus] = useState<"all" | "open" | "locked" | "active" | "finished">("all");
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const socketRef = useRef<Socket | null>(null);
 
   async function fetchLobbyRooms() {
@@ -69,14 +67,45 @@ export default function Home() {
     }
   }
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const savedCode = window.localStorage.getItem("mafia-room-code");
+    const savedName = window.localStorage.getItem("mafia-player-name");
+    if (savedCode && savedName) {
+      setJoinCode(savedCode);
+      setJoinName(savedName);
+      setMyName(savedName);
+      void fetch(`/api/game?roomCode=${encodeURIComponent(savedCode)}`)
+        .then((response) => response.json())
+        .then((payload) => {
+          if (!payload.error && payload.code) {
+            setGame(payload);
+            setNotice(`Welcome back to ${payload.roomName}.`);
+          }
+        })
+        .catch(() => undefined);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && game?.code) {
+      window.localStorage.setItem("mafia-room-code", game.code);
+      if (myName) {
+        window.localStorage.setItem("mafia-player-name", myName);
+      }
+    }
+  }, [game?.code, myName]);
+
   const currentPlayer = useMemo(() => {
     if (!game) {
       return null;
     }
 
-    const activeName = selectedPlayer || myName || game.players[0]?.name || "";
+    const activeName = myName || game.players[0]?.name || "";
     return game.players.find((player) => player.name === activeName) ?? game.players[0] ?? null;
-  }, [game, myName, selectedPlayer]);
+  }, [game, myName]);
 
   const livingTargets = useMemo(() => {
     if (!game || !currentPlayer) {
@@ -86,12 +115,19 @@ export default function Home() {
   }, [game, currentPlayer]);
 
   const godIsViewing = Boolean(
-    game && game.mode === "with-god" && currentPlayer && game.godName === currentPlayer.name,
+    game &&
+      game.phase !== "lobby" &&
+      game.mode === "with-god" &&
+      currentPlayer &&
+      game.godName === currentPlayer.name,
   );
+
+  const cannotActAsGod = Boolean(godIsViewing && game?.mode === "with-god");
 
   const canMafiaAct = Boolean(
     game &&
       currentPlayer &&
+      !cannotActAsGod &&
       currentPlayer.isAlive &&
       currentPlayer.role === "mafia" &&
       game.phase === "mafia-turn" &&
@@ -101,6 +137,7 @@ export default function Home() {
   const canVote = Boolean(
     game &&
       currentPlayer &&
+      !cannotActAsGod &&
       currentPlayer.isAlive &&
       game.phase === "village-vote" &&
       !game.votedPlayers.includes(currentPlayer.name) &&
@@ -129,7 +166,7 @@ export default function Home() {
     socket.on("connect", () => {
       socket.emit("room:join", {
         roomCode: game.code,
-        playerName: selectedPlayer || myName || currentPlayer?.name,
+        playerName: myName || currentPlayer?.name,
         password: joinPassword || roomPassword,
       });
     });
@@ -146,15 +183,31 @@ export default function Home() {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [currentPlayer?.name, game?.code, joinPassword, myName, roomPassword, selectedPlayer]);
+  }, [currentPlayer?.name, game?.code, joinPassword, myName, roomPassword]);
+
+  function setFieldError(name: string, message: string) {
+    setFieldErrors((current) => ({ ...current, [name]: message }));
+  }
 
   async function createRoom(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const nextName = myName.trim();
+    const nextErrors: Record<string, string> = {};
+
+    if (!nextName) {
+      nextErrors.moderatorName = "Please enter your name.";
+    }
+    if (mafiaCount < 1) {
+      nextErrors.mafiaCount = "At least 1 mafia is required.";
+    }
+
+    setFieldErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) {
+      return;
+    }
+
     setIsBusy(true);
     setNotice("Creating the room...");
-
-    const parsedPlayers = normalizePlayers(playersText);
-    const preferredPlayer = parsedPlayers.includes(myName) ? myName : parsedPlayers[0] ?? "";
 
     const response = await fetch("/api/game", {
       method: "POST",
@@ -164,7 +217,8 @@ export default function Home() {
         roomName,
         mode,
         mafiaCount,
-        players: parsedPlayers,
+        moderatorName: nextName,
+        players: [],
         password: roomPassword.trim() || undefined,
         physicalMode,
       }),
@@ -175,19 +229,36 @@ export default function Home() {
 
     if (payload.error) {
       setNotice(payload.error);
+      setFieldError("moderatorName", payload.error);
       return;
     }
 
     setGame(payload);
-    setSelectedPlayer(preferredPlayer);
-    setMyName(preferredPlayer);
-    setTargetChoice(payload.players[1]?.name ?? "");
-    setNotice(`${payload.roomName} is ready. Room code: ${payload.code}.`);
+    setMyName(nextName);
+    setTargetChoice("");
+    setNotice(`${payload.roomName} is ready. Share code ${payload.code} and wait for players to join.`);
     setRoomPassword("");
+    setFieldErrors({});
   }
 
   async function joinRoom(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const nextName = joinName.trim();
+    const nextCode = joinCode.trim();
+    const nextErrors: Record<string, string> = {};
+
+    if (!nextCode) {
+      nextErrors.joinCode = "Enter the room code.";
+    }
+    if (!nextName) {
+      nextErrors.joinName = "Enter your player name.";
+    }
+
+    setFieldErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) {
+      return;
+    }
+
     setIsBusy(true);
     setNotice("Joining room...");
 
@@ -196,8 +267,8 @@ export default function Home() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         action: "join",
-        roomCode: joinCode.trim(),
-        playerName: joinName.trim(),
+        roomCode: nextCode,
+        playerName: nextName,
         password: joinPassword,
       }),
     });
@@ -207,26 +278,29 @@ export default function Home() {
 
     if (payload.error) {
       setNotice(payload.error);
+      setFieldError(payload.code ? "joinCode" : "joinName", payload.error);
       return;
     }
 
     setGame(payload);
-    setSelectedPlayer(joinName.trim());
-    setMyName(joinName.trim());
-    setTargetChoice(payload.players[1]?.name ?? "");
-    setNotice(`${payload.roomName} joined successfully. Your room code is ${payload.code}.`);
+    setMyName(nextName);
+    setTargetChoice("");
+    setNotice(`${payload.roomName} joined successfully. Waiting for the host to start the game.`);
     setJoinPassword("");
+    setFieldErrors({});
   }
 
-  async function runAction(action: "mafia-kill" | "village-vote" | "restart" | "mafia-chat", targetOverride?: string, messageOverride?: string) {
+  async function runAction(action: "mafia-kill" | "village-vote" | "restart" | "start-game", targetOverride?: string) {
     if (!game || !currentPlayer) {
       return;
     }
 
-    const actionTarget = targetOverride ?? targetChoice;
-    if (action !== "restart" && action !== "mafia-chat" && !actionTarget) {
-      setNotice("Select a valid target before taking action.");
-      return;
+    if (action !== "restart" && action !== "start-game") {
+      const actionTarget = targetOverride ?? targetChoice;
+      if (!actionTarget) {
+        setNotice("Select a valid target before taking action.");
+        return;
+      }
     }
 
     setIsBusy(true);
@@ -238,11 +312,7 @@ export default function Home() {
     };
 
     if (action === "mafia-kill" || action === "village-vote") {
-      body.target = actionTarget;
-    }
-
-    if (action === "mafia-chat") {
-      body.message = (messageOverride ?? mafiaChatDraft).trim();
+      body.target = targetOverride ?? targetChoice;
     }
 
     const response = await fetch("/api/game", {
@@ -261,18 +331,15 @@ export default function Home() {
 
     setGame(payload);
     setTargetChoice("");
-    if (action === "mafia-chat") {
-      setMafiaChatDraft("");
-      setNotice(`${currentPlayer.name} sent a private mafia message.`);
-      return;
-    }
 
     setNotice(
-      action === "restart"
-        ? "A new game has started. Roles have been refreshed."
-        : action === "mafia-kill"
-          ? `${currentPlayer.name} targeted ${actionTarget}.`
-          : `${currentPlayer.name} voted against ${actionTarget}.`,
+      action === "start-game"
+        ? "The game has started. Roles are now active."
+        : action === "restart"
+          ? "A new game has started. Roles have been refreshed."
+          : action === "mafia-kill"
+            ? `${currentPlayer.name} targeted ${targetOverride ?? targetChoice}.`
+            : `${currentPlayer.name} voted against ${targetOverride ?? targetChoice}.`,
     );
   }
 
@@ -348,15 +415,6 @@ export default function Home() {
             <div className="rounded-3xl border border-amber-400/20 bg-slate-900/70 p-5 shadow-[0_18px_50px_rgba(15,23,42,0.45)] backdrop-blur-sm transition-all duration-500 hover:border-amber-400/45 hover:shadow-[0_18px_60px_rgba(251,191,36,0.08)] sm:p-6">
               <h2 className="text-2xl font-bold text-white">Create a room</h2>
               <form onSubmit={createRoom} className="mt-6 space-y-5">
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-200">Room name</label>
-                  <input
-                    value={roomName}
-                    onChange={(event) => setRoomName(event.target.value)}
-                    className="w-full rounded-2xl border border-slate-700 bg-slate-950/70 px-4 py-3 text-white outline-none transition duration-200 focus:border-amber-400 focus:ring-2 focus:ring-amber-500/30"
-                  />
-                </div>
-
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
                     <label className="mb-2 block text-sm font-medium text-slate-200">Game mode</label>
@@ -380,6 +438,7 @@ export default function Home() {
                       onChange={(event) => setMafiaCount(Number(event.target.value) || 1)}
                       className="w-full rounded-2xl border border-slate-700 bg-slate-950/70 px-4 py-3 text-white outline-none transition duration-200 focus:border-amber-400 focus:ring-2 focus:ring-amber-500/30"
                     />
+                    {fieldErrors.mafiaCount ? <p className="mt-2 text-sm text-red-300">{fieldErrors.mafiaCount}</p> : null}
                   </div>
                 </div>
 
@@ -387,10 +446,16 @@ export default function Home() {
                   <label className="mb-2 block text-sm font-medium text-slate-200">Your name</label>
                   <input
                     value={myName}
-                    onChange={(event) => setMyName(event.target.value)}
-                    className="w-full rounded-2xl border border-slate-700 bg-slate-950/70 px-4 py-3 text-white outline-none transition duration-200 focus:border-amber-400 focus:ring-2 focus:ring-amber-500/30"
+                    onChange={(event) => {
+                      setMyName(event.target.value);
+                      if (fieldErrors.moderatorName) {
+                        setFieldErrors((current) => ({ ...current, moderatorName: "" }));
+                      }
+                    }}
+                    className={`w-full rounded-2xl border bg-slate-950/70 px-4 py-3 text-white outline-none transition duration-200 focus:ring-2 ${fieldErrors.moderatorName ? "border-red-400 focus:border-red-400 focus:ring-red-500/30" : "border-slate-700 focus:border-amber-400 focus:ring-amber-500/30"}`}
                     placeholder="Pick a player name"
                   />
+                  {fieldErrors.moderatorName ? <p className="mt-2 text-sm text-red-300">{fieldErrors.moderatorName}</p> : null}
                 </div>
 
                 <div className="grid gap-4 sm:grid-cols-2">
@@ -418,16 +483,6 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-200">Player list</label>
-                  <textarea
-                    rows={9}
-                    value={playersText}
-                    onChange={(event) => setPlayersText(event.target.value)}
-                    className="w-full rounded-2xl border border-slate-700 bg-slate-950/70 px-4 py-3 text-white outline-none transition duration-200 focus:border-amber-400 focus:ring-2 focus:ring-amber-500/30"
-                  />
-                </div>
-
                 <button
                   type="submit"
                   disabled={isBusy}
@@ -446,20 +501,32 @@ export default function Home() {
                     <label className="mb-2 block text-sm font-medium text-slate-200">Room code</label>
                     <input
                       value={joinCode}
-                      onChange={(event) => setJoinCode(event.target.value.toUpperCase())}
-                      className="w-full rounded-2xl border border-slate-700 bg-slate-950/70 px-4 py-3 text-white outline-none transition duration-200 focus:border-sky-400 focus:ring-2 focus:ring-sky-500/30"
+                      onChange={(event) => {
+                        setJoinCode(event.target.value.toUpperCase());
+                        if (fieldErrors.joinCode) {
+                          setFieldErrors((current) => ({ ...current, joinCode: "" }));
+                        }
+                      }}
+                      className={`w-full rounded-2xl border bg-slate-950/70 px-4 py-3 text-white outline-none transition duration-200 focus:ring-2 ${fieldErrors.joinCode ? "border-red-400 focus:border-red-400 focus:ring-red-500/30" : "border-slate-700 focus:border-sky-400 focus:ring-sky-500/30"}`}
                       placeholder="ABC123"
                     />
+                    {fieldErrors.joinCode ? <p className="mt-2 text-sm text-red-300">{fieldErrors.joinCode}</p> : null}
                   </div>
 
                   <div>
                     <label className="mb-2 block text-sm font-medium text-slate-200">Player name</label>
                     <input
                       value={joinName}
-                      onChange={(event) => setJoinName(event.target.value)}
-                      className="w-full rounded-2xl border border-slate-700 bg-slate-950/70 px-4 py-3 text-white outline-none transition duration-200 focus:border-sky-400 focus:ring-2 focus:ring-sky-500/30"
+                      onChange={(event) => {
+                        setJoinName(event.target.value);
+                        if (fieldErrors.joinName) {
+                          setFieldErrors((current) => ({ ...current, joinName: "" }));
+                        }
+                      }}
+                      className={`w-full rounded-2xl border bg-slate-950/70 px-4 py-3 text-white outline-none transition duration-200 focus:ring-2 ${fieldErrors.joinName ? "border-red-400 focus:border-red-400 focus:ring-red-500/30" : "border-slate-700 focus:border-sky-400 focus:ring-sky-500/30"}`}
                       placeholder="Enter the player name in this room"
                     />
+                    {fieldErrors.joinName ? <p className="mt-2 text-sm text-red-300">{fieldErrors.joinName}</p> : null}
                   </div>
 
                   <div>
@@ -753,24 +820,31 @@ export default function Home() {
               <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                 <div>
                   <p className="text-xs uppercase tracking-[0.3em] text-slate-300">Current player</p>
-                  <select
-                    value={selectedPlayer}
-                    onChange={(event) => setSelectedPlayer(event.target.value)}
-                    className="mt-2 min-w-[220px] rounded-2xl border border-slate-700 bg-slate-950/80 px-4 py-3 text-white focus:border-amber-400"
-                  >
-                    {game.players.map((player) => (
-                      <option key={player.name} value={player.name}>
-                        {player.avatar} {player.name}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="mt-2 flex items-center gap-3 rounded-2xl border border-slate-700 bg-slate-950/80 px-4 py-3 text-white">
+                    <span className="text-xl">{currentPlayer?.avatar ?? "🎭"}</span>
+                    <span className="font-semibold">{currentPlayer?.name ?? "Unknown"}</span>
+                  </div>
                 </div>
 
                 <div className="rounded-2xl border border-slate-700 bg-slate-950/80 px-4 py-3 text-sm text-slate-200">
-                  {isNightPhase ? "Night phase – mafia is choosing" : game.physicalMode ? "Day phase – villagers pick the innocent suspect" : "Day phase – village is voting"}
+                  {game.phase === "lobby"
+                    ? "Lobby phase – waiting for all players to join"
+                    : isNightPhase
+                      ? "Night phase – mafia is choosing"
+                      : game.physicalMode
+                        ? "Day phase – villagers pick the innocent suspect"
+                        : "Day phase – village is voting"}
                 </div>
 
-                {game.winner ? (
+                {game.phase === "lobby" && currentPlayer && (currentPlayer.name === game.godName || currentPlayer.name === game.temporaryModerator) ? (
+                  <button
+                    type="button"
+                    onClick={() => void runAction("start-game")}
+                    className="rounded-2xl bg-gradient-to-r from-amber-400 to-orange-500 px-5 py-3 font-bold text-slate-950 shadow-lg shadow-amber-900/30"
+                  >
+                    Start game
+                  </button>
+                ) : game.winner ? (
                   <button
                     type="button"
                     onClick={() => void runAction("restart")}
@@ -786,63 +860,71 @@ export default function Home() {
               <div className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 sm:p-6">
                 <h3 className="text-xl font-bold text-white">Role overview</h3>
 
-                {currentPlayer && (
-                  <div className="mt-5 rounded-2xl border border-amber-400/30 bg-amber-500/10 p-4">
-                    <div className="flex items-center gap-3">
-                      <span className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-900 text-2xl shadow-inner shadow-slate-950/50">
-                        {currentPlayer.avatar}
-                      </span>
-                      <div>
-                        <p className="text-xs uppercase tracking-[0.3em] text-amber-200">Your identity</p>
-                        <p className="mt-1 text-2xl font-black text-white">
-                          {godIsViewing ? "God sees everyone" : currentPlayer.role === "mafia" ? "Mafia" : "Villager"}
-                        </p>
-                      </div>
-                    </div>
-                    {!godIsViewing && currentPlayer.role === "mafia" && game.phase === "mafia-turn" ? (
-                      <p className="mt-2 text-sm text-amber-100">You may choose a target to eliminate.</p>
-                    ) : null}
+                {game.phase === "lobby" ? (
+                  <div className="mt-5 rounded-2xl border border-slate-700 bg-slate-950/60 p-4 text-slate-300">
+                    The room is waiting for players. Once everyone has joined, the moderator can start the match.
                   </div>
-                )}
-
-                {game.mode === "with-god" && godIsViewing ? (
-                  <div className="mt-5 space-y-3">
-                    {game.players.map((player) => (
-                      <div
-                        key={player.name}
-                        className={`flex items-center justify-between rounded-2xl border px-4 py-3 ${
-                          player.isAlive
-                            ? "border-slate-700 bg-slate-950/60"
-                            : "border-red-500/40 bg-red-500/10 text-red-100"
-                        }`}
-                      >
+                ) : (
+                  <>
+                    {currentPlayer && (
+                      <div className="mt-5 rounded-2xl border border-amber-400/30 bg-amber-500/10 p-4">
                         <div className="flex items-center gap-3">
-                          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-xl">{player.avatar}</span>
+                          <span className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-900 text-2xl shadow-inner shadow-slate-950/50">
+                            {currentPlayer.avatar}
+                          </span>
                           <div>
-                            <p className="font-semibold text-white">{player.name}</p>
-                            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                              {player.isAlive ? "Alive" : "Eliminated"}
+                            <p className="text-xs uppercase tracking-[0.3em] text-amber-200">Your identity</p>
+                            <p className="mt-1 text-2xl font-black text-white">
+                              {godIsViewing ? "God sees everyone" : currentPlayer.role === "mafia" ? "Mafia" : "Villager"}
                             </p>
                           </div>
                         </div>
-                        <span
-                          className={`rounded-full px-3 py-1 text-xs font-bold uppercase tracking-[0.2em] ${
-                            player.role === "mafia"
-                              ? "bg-red-500/20 text-red-200"
-                              : "bg-emerald-500/20 text-emerald-200"
-                          }`}
-                        >
-                          {player.role}
-                        </span>
+                        {!godIsViewing && currentPlayer.role === "mafia" && game.phase === "mafia-turn" ? (
+                          <p className="mt-2 text-sm text-amber-100">You may choose a target to eliminate.</p>
+                        ) : null}
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="mt-5 rounded-2xl border border-slate-700 bg-slate-950/60 p-4 text-slate-300">
-                    {currentPlayer && currentPlayer.role === "mafia"
-                      ? "You are a mafia operative. Stay quiet and choose a target when the mafia turn opens."
-                      : "You are a villager. Observe the town, vote wisely, and catch the mafia."}
-                  </div>
+                    )}
+
+                    {game.mode === "with-god" && godIsViewing ? (
+                      <div className="mt-5 space-y-3">
+                        {game.players.map((player) => (
+                          <div
+                            key={player.name}
+                            className={`flex items-center justify-between rounded-2xl border px-4 py-3 ${
+                              player.isAlive
+                                ? "border-slate-700 bg-slate-950/60"
+                                : "border-red-500/40 bg-red-500/10 text-red-100"
+                            }`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <span className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-xl">{player.avatar}</span>
+                              <div>
+                                <p className="font-semibold text-white">{player.name}</p>
+                                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                                  {player.isAlive ? "Alive" : "Eliminated"}
+                                </p>
+                              </div>
+                            </div>
+                            <span
+                              className={`rounded-full px-3 py-1 text-xs font-bold uppercase tracking-[0.2em] ${
+                                player.role === "mafia"
+                                  ? "bg-red-500/20 text-red-200"
+                                  : "bg-emerald-500/20 text-emerald-200"
+                              }`}
+                            >
+                              {player.role}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="mt-5 rounded-2xl border border-slate-700 bg-slate-950/60 p-4 text-slate-300">
+                        {currentPlayer && currentPlayer.role === "mafia"
+                          ? "You are a mafia operative. Stay quiet and choose a target when the mafia turn opens."
+                          : "You are a villager. Observe the town, vote wisely, and catch the mafia."}
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
 
@@ -929,52 +1011,6 @@ export default function Home() {
               </div>
             </div>
 
-            {currentPlayer?.role === "mafia" ? (
-              <div className="rounded-3xl border border-red-500/30 bg-red-500/10 p-5 sm:p-6">
-                <h3 className="text-xl font-bold text-white">Private mafia chat</h3>
-                <div className="mt-4 space-y-3">
-                  {game.mafiaChat.length === 0 ? (
-                    <p className="rounded-2xl border border-dashed border-red-400/40 bg-slate-950/60 p-4 text-sm text-red-100">
-                      No messages yet. Coordinate quietly with your crew.
-                    </p>
-                  ) : (
-                    game.mafiaChat.map((message, index) => (
-                      <div key={`${message.sender}-${message.sentAt}-${index}`} className="rounded-2xl border border-red-400/30 bg-slate-950/60 p-3 text-sm text-slate-200">
-                        <p className="font-semibold text-red-200">{message.sender}</p>
-                        <p className="mt-1">{message.message}</p>
-                      </div>
-                    ))
-                  )}
-                </div>
-                <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-                  <input
-                    value={mafiaChatDraft}
-                    onChange={(event) => setMafiaChatDraft(event.target.value)}
-                    placeholder="Send a secret mafia message..."
-                    className="flex-1 rounded-2xl border border-red-400/30 bg-slate-950/80 px-4 py-3 text-white outline-none focus:border-red-400"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!mafiaChatDraft.trim()) {
-                        setNotice("Write a mafia message before sending.");
-                        return;
-                      }
-                      void runAction("mafia-chat", undefined, mafiaChatDraft);
-                    }}
-                    className="rounded-2xl bg-gradient-to-r from-red-500 to-rose-500 px-5 py-3 font-bold text-white"
-                  >
-                    Send
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="rounded-3xl border border-slate-700 bg-slate-900/70 p-5 sm:p-6">
-                <h3 className="text-xl font-bold text-white">Private mafia chat</h3>
-                <p className="mt-3 text-sm text-slate-300">This channel stays hidden from the village. Only mafia members can see its contents.</p>
-              </div>
-            )}
-
             <div className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 sm:p-6">
               <h3 className="text-xl font-bold text-white">Player board</h3>
               <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -984,11 +1020,7 @@ export default function Home() {
                     <div
                       key={player.name}
                       className={`rounded-2xl border p-4 ${
-                        player.isAlive
-                          ? selectedPlayer === player.name
-                            ? "border-amber-400 bg-amber-500/10"
-                            : "border-slate-700 bg-slate-950/60"
-                          : "border-red-500/40 bg-red-500/10"
+                        player.isAlive ? "border-slate-700 bg-slate-950/60" : "border-red-500/40 bg-red-500/10"
                       }`}
                     >
                       <div className="flex items-center justify-between gap-3">

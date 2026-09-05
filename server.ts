@@ -24,6 +24,8 @@ app.prepare().then(() => {
     },
   });
 
+  (globalThis as typeof globalThis & { __mafiaSocketServer?: typeof io }).__mafiaSocketServer = io;
+
   io.on("connection", (socket) => {
     socket.on(
       "room:join",
@@ -64,7 +66,7 @@ app.prepare().then(() => {
       (payload: {
         roomCode?: string;
         roomId?: string;
-        action: "mafia-kill" | "village-vote" | "restart" | "mafia-chat";
+        action: "mafia-kill" | "village-vote" | "restart" | "start-game";
         actor?: string;
         target?: string;
         message?: string;

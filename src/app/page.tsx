@@ -610,7 +610,7 @@ export default function Home() {
                   </div>
                   <div>
                     <h3 className="font-bold text-white">4. Innocent check</h3>
-                    <p>During the Mafia turn, villagers tap only <strong className="text-emerald-200">I&apos;m innocent</strong> on their own device view. This prevents villagers from seeing or guessing the Mafia as he will touch his device.</p>
+                    <p>During the Mafia turn, villagers tap only <strong className="text-emerald-200">I&apos;m innocent</strong> on their own device view. This prevents villagers from seeing or guessing the Mafia when playing physically in the same room.</p>
                   </div>
                   <div>
                     <h3 className="font-bold text-white">5. Village vote</h3>
@@ -849,7 +849,7 @@ export default function Home() {
                   <li>• Everyone joins the lobby; the moderator starts once all players are ready.</li>
                   <li>• Roles are randomly assigned when the game starts and stay hidden.</li>
                   <li>• Mafia secretly touches one player and records the target in the app.</li>
-                  <li>• During the Mafia turn, villagers tap only <strong className="text-emerald-200">I&apos;m innocent</strong> on their own device view. This prevents villagers from seeing or guessing the Mafia as he will touch his device.</li>
+                  <li>• During the Mafia turn, villagers tap only <strong className="text-emerald-200">I&apos;m innocent</strong> on their own device view. This prevents villagers from seeing or guessing the Mafia when playing physically in the same room.</li>
                   <li>• The living players discuss and vote. The highest vote eliminates a player; ties mean nobody is eliminated.</li>
                   <li>• Villagers win by eliminating all Mafia. Mafia wins when they equal or outnumber the villagers.</li>
                   <li>• Any player can quit after confirmation. If Mafia or the moderator quits, the game ends.</li>

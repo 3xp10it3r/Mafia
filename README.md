@@ -1,4 +1,12 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Mafia Game Room
+
+A realtime, room-based Mafia game built with Next.js, Socket.IO, and SQLite.
+
+## Deployment requirement
+
+This app uses a custom Node server (`server.ts`) for Socket.IO and writes room state to SQLite. Deploy it on a persistent Node host such as Railway, Render, Fly.io, or a VPS. Netlify's serverless filesystem and isolated function instances cannot provide durable shared SQLite state or a shared Socket.IO process, so rooms can disappear or fail to broadcast there.
+
+For production, set `SQLITE_DB_PATH` to a persistent mounted path or replace the SQLite store with a hosted database. The client also polls the room API as a fallback when WebSocket delivery is unavailable.
 
 ## Getting Started
 

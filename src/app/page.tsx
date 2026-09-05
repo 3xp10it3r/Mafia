@@ -81,13 +81,54 @@ export default function Home() {
         .then((response) => response.json())
         .then((payload) => {
           if (!payload.error && payload.code) {
+            if (payload.closed) {
+              window.localStorage.removeItem("mafia-room-code");
+              window.localStorage.removeItem("mafia-player-name");
+              window.localStorage.removeItem("mafia-room-password");
+              window.localStorage.removeItem("mafia-room-snapshot");
+              setGame(null);
+              setMyName("");
+              setJoinCode("");
+              setJoinName("");
+              setNotice("The room was closed.");
+              return;
+            }
+
             setGame(payload);
             setNotice(`Welcome back to ${payload.roomName}.`);
           } else {
+            const snapshot = window.localStorage.getItem("mafia-room-snapshot");
+            if (snapshot) {
+              try {
+                const savedRoom = JSON.parse(snapshot) as GameState;
+                if (savedRoom.code === savedCode) {
+                  setGame(savedRoom);
+                  setNotice("Restored your last room view. Reconnecting to the room server...");
+                  return;
+                }
+              } catch {
+                window.localStorage.removeItem("mafia-room-snapshot");
+              }
+            }
             setFieldErrors({ joinCode: payload.error ?? "This room is no longer available." });
           }
         })
-        .catch(() => setFieldErrors({ joinCode: "Unable to restore this room right now." }));
+        .catch(() => {
+          const snapshot = window.localStorage.getItem("mafia-room-snapshot");
+          if (snapshot) {
+            try {
+              const savedRoom = JSON.parse(snapshot) as GameState;
+              if (savedRoom.code === savedCode) {
+                setGame(savedRoom);
+                setNotice("Restored your last room view. Reconnecting to the room server...");
+                return;
+              }
+            } catch {
+              window.localStorage.removeItem("mafia-room-snapshot");
+            }
+          }
+          setFieldErrors({ joinCode: "Unable to restore this room right now." });
+        });
     }
   }, []);
 
@@ -97,11 +138,12 @@ export default function Home() {
       if (myName) {
         window.localStorage.setItem("mafia-player-name", myName);
       }
+      window.localStorage.setItem("mafia-room-snapshot", JSON.stringify(game));
       if (joinPassword || roomPassword) {
         window.localStorage.setItem("mafia-room-password", joinPassword || roomPassword);
       }
     }
-  }, [game?.code, myName]);
+  }, [game, joinPassword, myName, roomPassword]);
 
   const currentPlayer = useMemo(() => {
     if (!game) {
@@ -164,7 +206,7 @@ export default function Home() {
       return undefined;
     }
 
-    const socket = io({ transports: ["websocket"] });
+    const socket = io({ transports: ["websocket", "polling"], reconnection: true, reconnectionAttempts: Infinity });
     socketRef.current = socket;
 
     socket.on("connect", () => {
@@ -179,6 +221,15 @@ export default function Home() {
       setGame(updatedRoom);
     });
 
+    socket.on("room:closed", () => {
+      window.localStorage.removeItem("mafia-room-code");
+      window.localStorage.removeItem("mafia-player-name");
+      window.localStorage.removeItem("mafia-room-password");
+      window.localStorage.removeItem("mafia-room-snapshot");
+      setGame(null);
+      setNotice("The moderator closed this room.");
+    });
+
     socket.on("room:error", ({ message }: { message: string }) => {
       setNotice(message);
     });
@@ -188,6 +239,40 @@ export default function Home() {
       socketRef.current = null;
     };
   }, [currentPlayer?.name, game?.code, joinPassword, myName, roomPassword]);
+
+  useEffect(() => {
+    if (!game?.code) {
+      return undefined;
+    }
+
+    let stopped = false;
+    const refreshRoom = async () => {
+      try {
+        const response = await fetch(`/api/game?roomCode=${encodeURIComponent(game.code)}`, {
+          cache: "no-store",
+          headers: { "Cache-Control": "no-cache" },
+        });
+        const payload = await response.json();
+        if (!stopped && payload.code === game.code) {
+          setGame((current) => {
+            if (!current || payload.updatedAt >= current.updatedAt) {
+              return payload;
+            }
+            return current;
+          });
+        }
+      } catch {
+        // Socket.IO remains the primary transport; polling is a best-effort fallback.
+      }
+    };
+
+    void refreshRoom();
+    const timer = window.setInterval(() => void refreshRoom(), 2000);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [game?.code]);
 
   function setFieldError(name: string, message: string) {
     setFieldErrors((current) => ({ ...current, [name]: message }));
@@ -308,12 +393,12 @@ export default function Home() {
     setFieldErrors({});
   }
 
-  async function runAction(action: "mafia-kill" | "village-vote" | "restart" | "start-game", targetOverride?: string) {
+  async function runAction(action: "mafia-kill" | "village-vote" | "restart" | "start-game" | "transfer-moderator", targetOverride?: string) {
     if (!game || !currentPlayer) {
       return;
     }
 
-    if (action !== "restart" && action !== "start-game") {
+    if (action !== "restart" && action !== "start-game" && action !== "transfer-moderator") {
       const actionTarget = targetOverride ?? targetChoice;
       if (!actionTarget) {
         setNotice("Select a valid target before taking action.");
@@ -329,7 +414,7 @@ export default function Home() {
       actor: currentPlayer.name,
     };
 
-    if (action === "mafia-kill" || action === "village-vote") {
+    if (action === "mafia-kill" || action === "village-vote" || action === "transfer-moderator") {
       body.target = targetOverride ?? targetChoice;
     }
 
@@ -347,6 +432,19 @@ export default function Home() {
       return;
     }
 
+    if (payload.closed) {
+      window.localStorage.removeItem("mafia-room-code");
+      window.localStorage.removeItem("mafia-player-name");
+      window.localStorage.removeItem("mafia-room-password");
+      window.localStorage.removeItem("mafia-room-snapshot");
+      setGame(null);
+      setMyName("");
+      setJoinCode("");
+      setJoinName("");
+      setNotice("The room was closed.");
+      return;
+    }
+
     setGame(payload);
     setTargetChoice("");
 
@@ -355,10 +453,57 @@ export default function Home() {
         ? "The game has started. Roles are now active."
         : action === "restart"
           ? "A new game has started. Roles have been refreshed."
+          : action === "transfer-moderator"
+            ? `Moderator rights transferred to ${targetOverride}.`
           : action === "mafia-kill"
             ? `${currentPlayer.name} targeted ${targetOverride ?? targetChoice}.`
             : `${currentPlayer.name} voted against ${targetOverride ?? targetChoice}.`,
     );
+  }
+
+  async function leaveRoom() {
+    if (!game || !currentPlayer || isBusy) return;
+    setIsBusy(true);
+    const response = await fetch("/api/game", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "leave-room", roomCode: game.code, actor: currentPlayer.name }),
+    });
+    const payload = await response.json();
+    setIsBusy(false);
+    if (payload.error) {
+      setNotice(payload.error);
+      return;
+    }
+    window.localStorage.removeItem("mafia-room-code");
+    window.localStorage.removeItem("mafia-player-name");
+    window.localStorage.removeItem("mafia-room-password");
+    window.localStorage.removeItem("mafia-room-snapshot");
+    setGame(null);
+    setMyName("");
+    setNotice(payload.closed ? "You left the room." : "You left the room.");
+  }
+
+  async function closeRoom() {
+    if (!game || !currentPlayer || isBusy) return;
+    setIsBusy(true);
+    const response = await fetch("/api/game", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "quit-room", roomCode: game.code, actor: currentPlayer.name }),
+    });
+    const payload = await response.json();
+    setIsBusy(false);
+    if (payload.error) {
+      setNotice(payload.error);
+      return;
+    }
+    window.localStorage.removeItem("mafia-room-code");
+    window.localStorage.removeItem("mafia-player-name");
+    window.localStorage.removeItem("mafia-room-password");
+    window.localStorage.removeItem("mafia-room-snapshot");
+    setGame(null);
+    setNotice("The room was closed for everyone.");
   }
 
   const generalSummary = useMemo(() => {
@@ -403,6 +548,8 @@ export default function Home() {
   const winnerTone = game?.winner === "mafia" ? "mafia" : "villager";
   const lastElimination = game && game.log.length > 0 ? game.log[0] : "No elimination logged yet";
   const totalVotesCast = game ? Object.keys(game.votesByPlayer).length : 0;
+  const mafiaNames = game ? game.players.filter((player) => player.role === "mafia").map((player) => player.name) : [];
+  const isModerator = Boolean(game && currentPlayer && game.temporaryModerator === currentPlayer.name);
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,_#111827,_#020617_55%)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
@@ -414,6 +561,11 @@ export default function Home() {
               <h1 className="mt-2 text-3xl font-black tracking-tight text-white sm:text-4xl">The Town of Shadows</h1>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              {notice ? (
+                <div className="rounded-2xl border border-sky-400/30 bg-sky-500/10 px-3 py-2 text-sm font-medium text-sky-100 shadow-lg shadow-sky-900/10" role="status">
+                  {notice}
+                </div>
+              ) : null}
               {game && game.phase !== "lobby" ? (
                 <div className="rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-sm font-medium text-emerald-100 shadow-lg shadow-emerald-900/10">
                   {generalSummary}
@@ -781,17 +933,22 @@ export default function Home() {
                           )}
                         </div>
                       </div>
+                      <div className="rounded-2xl border border-red-400/20 bg-red-500/10 p-4">
+                        <p className="text-[10px] uppercase tracking-[0.3em] text-red-200">Mafia reveal</p>
+                        <p className="mt-3 text-sm font-semibold text-red-100">{mafiaNames.join(", ") || "No mafia assigned"}</p>
+                      </div>
                     </div>
 
-                    <div className="flex justify-end">
-                      <button
-                        type="button"
-                        onClick={() => void runAction("restart")}
-                        className="rounded-2xl bg-gradient-to-r from-emerald-400 to-cyan-500 px-5 py-3 font-bold text-slate-950 shadow-lg shadow-emerald-900/30"
-                      >
-                        New game
-                      </button>
-                    </div>
+                    {isModerator ? (
+                      <div className="flex flex-col justify-end gap-3 sm:flex-row">
+                        <button type="button" onClick={() => void runAction("restart")} className="rounded-2xl bg-gradient-to-r from-emerald-400 to-cyan-500 px-5 py-3 font-bold text-slate-950 shadow-lg shadow-emerald-900/30">
+                          New game
+                        </button>
+                        <button type="button" onClick={() => void closeRoom()} className="rounded-2xl border border-red-400/40 bg-red-500/15 px-5 py-3 font-bold text-red-100">
+                          Quit game
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               </div>
@@ -853,6 +1010,11 @@ export default function Home() {
                               <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Player</p>
                             )}
                           </div>
+                          {isModerator && player.name !== currentPlayer?.name ? (
+                            <button type="button" onClick={() => void runAction("transfer-moderator", player.name)} className="ml-auto rounded-xl border border-amber-400/30 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-200">
+                              Transfer
+                            </button>
+                          ) : null}
                         </div>
                       ))}
                     </div>
@@ -877,7 +1039,7 @@ export default function Home() {
                         : "Day phase – village is voting"}
                 </div>
 
-                {game.phase === "lobby" && currentPlayer && (currentPlayer.name === game.godName || currentPlayer.name === game.temporaryModerator) ? (
+                {game.phase === "lobby" && currentPlayer && currentPlayer.name === game.temporaryModerator ? (
                   <button
                     type="button"
                     onClick={() => void runAction("start-game")}
@@ -885,13 +1047,23 @@ export default function Home() {
                   >
                     Start game
                   </button>
-                ) : game.winner ? (
+                ) : game.winner && isModerator ? (
                   <button
                     type="button"
                     onClick={() => void runAction("restart")}
                     className="rounded-2xl bg-gradient-to-r from-emerald-400 to-cyan-500 px-5 py-3 font-bold text-slate-950 shadow-lg shadow-emerald-900/30"
                   >
                     Start new game
+                  </button>
+                ) : null}
+                {game.phase !== "lobby" && currentPlayer && currentPlayer.role !== "mafia" && currentPlayer.isAlive ? (
+                  <button type="button" onClick={() => void leaveRoom()} className="rounded-2xl border border-red-400/30 bg-red-500/10 px-5 py-3 font-bold text-red-100">
+                    Quit game
+                  </button>
+                ) : null}
+                {game.phase === "lobby" && currentPlayer && currentPlayer.name !== game.temporaryModerator ? (
+                  <button type="button" onClick={() => void leaveRoom()} className="rounded-2xl border border-red-400/30 bg-red-500/10 px-5 py-3 font-bold text-red-100">
+                    Quit game
                   </button>
                 ) : null}
               </div>

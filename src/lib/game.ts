@@ -49,6 +49,22 @@ export function shuffle<T>(items: T[]): T[] {
 }
 
 export const AVATAR_POOL = ["🦊", "🐺", "🦁", "🐼", "🐯", "🐰", "🦄", "🐨", "🐸", "🐵", "🦅", "🐔", "🐮", "🐲", "🦉"];
+export const ROOM_NAMES = [
+  "The Velvet Dagger",
+  "Moonlit Borough",
+  "Whispering Pines",
+  "Crimson Lantern",
+  "The Silent District",
+  "Midnight Assembly",
+  "Shadow over Harbor",
+  "The Crooked Crown",
+  "Fogbound Town",
+  "Ember Street",
+];
+
+export function randomRoomName(): string {
+  return ROOM_NAMES[Math.floor(Math.random() * ROOM_NAMES.length)] ?? "The Velvet Dagger";
+}
 
 export function buildRoles(names: string[], mafiaCount: number): PlayerState[] {
   const uniqueNames = Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));

@@ -66,7 +66,7 @@ app.prepare().then(() => {
       (payload: {
         roomCode?: string;
         roomId?: string;
-        action: "mafia-kill" | "village-vote" | "restart" | "start-game";
+        action: "mafia-kill" | "village-vote" | "restart" | "start-game" | "transfer-moderator";
         actor?: string;
         target?: string;
         message?: string;

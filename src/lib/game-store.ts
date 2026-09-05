@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
-import { AVATAR_POOL, buildRoles, generateRoomCode, getLivingPlayers, getMafiaAlive, getVillagerAlive, type GameState } from "@/lib/game";
+import { AVATAR_POOL, buildRoles, generateRoomCode, getLivingPlayers, getMafiaAlive, getVillagerAlive, randomRoomName, type GameState } from "@/lib/game";
 
 const dbPath =
   process.env.SQLITE_DB_PATH ||
@@ -74,6 +74,10 @@ export function getGameByCode(roomCode: string): GameState | undefined {
   return row?.payload ? (JSON.parse(row.payload) as GameState) : undefined;
 }
 
+export function deleteRoom(roomCode: string): void {
+  db.prepare("DELETE FROM rooms WHERE code = ?").run(roomCode.toUpperCase());
+}
+
 function generateUniqueRoomCode(): string {
   let code = generateRoomCode();
   while (getGameByCode(code)) {
@@ -108,6 +112,7 @@ export function createGame({
   const safeMafiaCount = Math.max(1, Math.min(mafiaCount || 1, Math.max(1, allNames.length - 1)));
   const id = `room-${Math.random().toString(36).slice(2, 9)}`;
   const now = new Date().toISOString();
+  const generatedRoomName = (roomName ?? "").trim() || randomRoomName();
   const playerList: GameState["players"] = allNames.map((name) => ({
     name,
     role: "villager",
@@ -118,7 +123,7 @@ export function createGame({
   const room: GameState = {
     id,
     code: generateUniqueRoomCode(),
-    roomName: (roomName ?? "Mafia Room").trim() || "Mafia Room",
+    roomName: generatedRoomName,
     mode,
     mafiaCount: safeMafiaCount,
     players: playerList,
@@ -131,7 +136,7 @@ export function createGame({
     votedPlayers: [],
     pendingKillTarget: null,
     log: [
-      `${(roomName ?? "Mafia Room").trim() || "Mafia Room"} is waiting for players.`,
+      `${generatedRoomName} is waiting for players.`,
       mode === "with-god" ? `${creatorName} is the God moderator.` : `${creatorName} is the temporary moderator for this room.`,
     ],
     mafiaChat: [],
@@ -251,6 +256,7 @@ export function joinPlayerToRoom(roomCode: string, playerName: string): GameStat
   if (!room) {
     throw new Error("Room not found.");
   }
+
   if (room.phase !== "lobby") {
     throw new Error("This room has already started.");
   }
@@ -276,6 +282,40 @@ export function joinPlayerToRoom(roomCode: string, playerName: string): GameStat
   return upsertRoom(nextRoom);
 }
 
+export function leavePlayerFromRoom(roomCode: string, playerName: string): GameState | null {
+  const room = getGameByCode(roomCode);
+  if (!room) {
+    throw new Error("Room not found.");
+  }
+  const player = room.players.find((entry) => entry.name.toLowerCase() === playerName.toLowerCase());
+  if (!player) {
+    throw new Error("Player is not in this room.");
+  }
+  if (player.role === "mafia" && room.phase !== "lobby") {
+    throw new Error("Mafia players cannot quit during an active game.");
+  }
+
+  const remainingPlayers = room.players.filter((entry) => entry.name !== player.name);
+  if (remainingPlayers.length === 0) {
+    deleteRoom(room.code);
+    return null;
+  }
+
+  const nextRoom: GameState = {
+    ...room,
+    players: remainingPlayers,
+    temporaryModerator: room.temporaryModerator === player.name ? remainingPlayers[0]?.name ?? null : room.temporaryModerator,
+    log: [...room.log, `${player.name} left the room.`],
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (nextRoom.phase !== "lobby" && player.role === "villager") {
+    updateWinnerState(nextRoom);
+  }
+
+  return upsertRoom(nextRoom);
+}
+
 export function applyAction({
   roomId,
   roomCode,
@@ -286,7 +326,7 @@ export function applyAction({
 }: {
   roomId?: string;
   roomCode?: string;
-  action: "mafia-kill" | "village-vote" | "restart" | "start-game";
+  action: "mafia-kill" | "village-vote" | "restart" | "start-game" | "transfer-moderator";
   actor?: string;
   target?: string;
   message?: string;
@@ -294,6 +334,20 @@ export function applyAction({
   const room = roomId ? getGameById(roomId) : roomCode ? getGameByCode(roomCode) : undefined;
   if (!room) {
     throw new Error("Room not found.");
+  }
+
+  if (action === "transfer-moderator") {
+    if (!actor || actor !== room.temporaryModerator || !target) {
+      throw new Error("Only the current moderator can transfer moderator rights.");
+    }
+    const successor = room.players.find((player) => player.name === target);
+    if (!successor || !successor.isAlive) {
+      throw new Error("Choose an alive player as the new moderator.");
+    }
+    room.temporaryModerator = successor.name;
+    room.log.unshift(`${actor} transferred moderator rights to ${successor.name}.`);
+    room.updatedAt = new Date().toISOString();
+    return upsertRoom(room);
   }
 
   if (action === "restart") {

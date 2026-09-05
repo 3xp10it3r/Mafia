@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
-import type { GameMode, GameState } from "@/lib/game";
+import type { GameState } from "@/lib/game";
 
 const normalizePlayers = (value: string) =>
   value
@@ -37,11 +37,9 @@ const winnerBadgeLabel = {
 };
 
 export default function Home() {
-  const [roomName, setRoomName] = useState("Mafia Room");
   const [roomPassword, setRoomPassword] = useState("");
   const [joinPassword, setJoinPassword] = useState("");
-  const [mode, setMode] = useState<GameMode>("with-god");
-  const [mafiaCount, setMafiaCount] = useState(2);
+  const [mafiaCount, setMafiaCount] = useState(1);
   const [physicalMode, setPhysicalMode] = useState(false);
   const [myName, setMyName] = useState("");
   const [joinCode, setJoinCode] = useState("");
@@ -73,19 +71,23 @@ export default function Home() {
     }
     const savedCode = window.localStorage.getItem("mafia-room-code");
     const savedName = window.localStorage.getItem("mafia-player-name");
+    const savedPassword = window.localStorage.getItem("mafia-room-password") ?? "";
     if (savedCode && savedName) {
       setJoinCode(savedCode);
       setJoinName(savedName);
       setMyName(savedName);
+      setJoinPassword(savedPassword);
       void fetch(`/api/game?roomCode=${encodeURIComponent(savedCode)}`)
         .then((response) => response.json())
         .then((payload) => {
           if (!payload.error && payload.code) {
             setGame(payload);
             setNotice(`Welcome back to ${payload.roomName}.`);
+          } else {
+            setFieldErrors({ joinCode: payload.error ?? "This room is no longer available." });
           }
         })
-        .catch(() => undefined);
+        .catch(() => setFieldErrors({ joinCode: "Unable to restore this room right now." }));
     }
   }, []);
 
@@ -95,6 +97,9 @@ export default function Home() {
       if (myName) {
         window.localStorage.setItem("mafia-player-name", myName);
       }
+      if (joinPassword || roomPassword) {
+        window.localStorage.setItem("mafia-room-password", joinPassword || roomPassword);
+      }
     }
   }, [game?.code, myName]);
 
@@ -103,8 +108,7 @@ export default function Home() {
       return null;
     }
 
-    const activeName = myName || game.players[0]?.name || "";
-    return game.players.find((player) => player.name === activeName) ?? game.players[0] ?? null;
+    return game.players.find((player) => player.name === myName) ?? null;
   }, [game, myName]);
 
   const livingTargets = useMemo(() => {
@@ -167,7 +171,7 @@ export default function Home() {
       socket.emit("room:join", {
         roomCode: game.code,
         playerName: myName || currentPlayer?.name,
-        password: joinPassword || roomPassword,
+        password: joinPassword || roomPassword || window.localStorage.getItem("mafia-room-password") || "",
       });
     });
 
@@ -214,8 +218,8 @@ export default function Home() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         action: "create",
-        roomName,
-        mode,
+        roomName: "Mafia Room",
+        mode: "without-god",
         mafiaCount,
         moderatorName: nextName,
         players: [],
@@ -235,8 +239,14 @@ export default function Home() {
 
     setGame(payload);
     setMyName(nextName);
+    setJoinCode(payload.code);
+    setJoinName(nextName);
+    if (roomPassword.trim()) {
+      window.localStorage.setItem("mafia-room-password", roomPassword.trim());
+    }
     setTargetChoice("");
     setNotice(`${payload.roomName} is ready. Share code ${payload.code} and wait for players to join.`);
+    setJoinPassword(roomPassword);
     setRoomPassword("");
     setFieldErrors({});
   }
@@ -278,15 +288,23 @@ export default function Home() {
 
     if (payload.error) {
       setNotice(payload.error);
-      setFieldError(payload.code ? "joinCode" : "joinName", payload.error);
+      setFieldError(payload.field ?? "joinCode", payload.error);
       return;
     }
 
+    const joinedPlayer = payload.players.find(
+      (player: { name: string }) => player.name.toLowerCase() === nextName.toLowerCase(),
+    );
+    const canonicalName = joinedPlayer?.name ?? nextName;
     setGame(payload);
-    setMyName(nextName);
+    setMyName(canonicalName);
+    setJoinCode(nextCode);
+    setJoinName(canonicalName);
+    if (joinPassword) {
+      window.localStorage.setItem("mafia-room-password", joinPassword);
+    }
     setTargetChoice("");
     setNotice(`${payload.roomName} joined successfully. Waiting for the host to start the game.`);
-    setJoinPassword("");
     setFieldErrors({});
   }
 
@@ -396,7 +414,7 @@ export default function Home() {
               <h1 className="mt-2 text-3xl font-black tracking-tight text-white sm:text-4xl">The Town of Shadows</h1>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              {game ? (
+              {game && game.phase !== "lobby" ? (
                 <div className="rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-sm font-medium text-emerald-100 shadow-lg shadow-emerald-900/10">
                   {generalSummary}
                 </div>
@@ -415,31 +433,17 @@ export default function Home() {
             <div className="rounded-3xl border border-amber-400/20 bg-slate-900/70 p-5 shadow-[0_18px_50px_rgba(15,23,42,0.45)] backdrop-blur-sm transition-all duration-500 hover:border-amber-400/45 hover:shadow-[0_18px_60px_rgba(251,191,36,0.08)] sm:p-6">
               <h2 className="text-2xl font-bold text-white">Create a room</h2>
               <form onSubmit={createRoom} className="mt-6 space-y-5">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-200">Game mode</label>
-                    <select
-                      value={mode}
-                      onChange={(event) => setMode(event.target.value as GameMode)}
-                      className="w-full rounded-2xl border border-slate-700 bg-slate-950/70 px-4 py-3 text-white outline-none transition duration-200 focus:border-amber-400 focus:ring-2 focus:ring-amber-500/30"
-                    >
-                      <option value="with-god">With God</option>
-                      <option value="without-god">Without God</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-200">Number of mafia</label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={10}
-                      value={mafiaCount}
-                      onChange={(event) => setMafiaCount(Number(event.target.value) || 1)}
-                      className="w-full rounded-2xl border border-slate-700 bg-slate-950/70 px-4 py-3 text-white outline-none transition duration-200 focus:border-amber-400 focus:ring-2 focus:ring-amber-500/30"
-                    />
-                    {fieldErrors.mafiaCount ? <p className="mt-2 text-sm text-red-300">{fieldErrors.mafiaCount}</p> : null}
-                  </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-slate-200">Number of mafia</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={mafiaCount}
+                    onChange={(event) => setMafiaCount(Number(event.target.value) || 1)}
+                    className="w-full rounded-2xl border border-slate-700 bg-slate-950/70 px-4 py-3 text-white outline-none transition duration-200 focus:border-amber-400 focus:ring-2 focus:ring-amber-500/30"
+                  />
+                  {fieldErrors.mafiaCount ? <p className="mt-2 text-sm text-red-300">{fieldErrors.mafiaCount}</p> : null}
                 </div>
 
                 <div>
@@ -793,22 +797,22 @@ export default function Home() {
               </div>
             ) : null}
 
-            <div className="grid gap-4 md:grid-cols-3">
-              <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Room</p>
-                <h2 className="mt-2 text-xl font-bold text-white sm:text-2xl">{game.roomName}</h2>
+            {game.phase !== "lobby" ? (
+              <div className="grid gap-4 md:grid-cols-3">
+                <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+                  <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Room</p>
+                  <h2 className="mt-2 text-xl font-bold text-white sm:text-2xl">{game.roomName}</h2>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+                  <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Players</p>
+                  <h2 className="mt-2 text-lg font-bold text-white sm:text-xl">{game.players.length}</h2>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+                  <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Phase</p>
+                  <h2 className="mt-2 text-lg font-bold text-white sm:text-xl">{game.phase}</h2>
+                </div>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Mode</p>
-                <h2 className="mt-2 text-lg font-bold text-white sm:text-xl">
-                  {game.mode === "with-god" ? "With God" : "Without God"}
-                </h2>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Phase</p>
-                <h2 className="mt-2 text-lg font-bold text-white sm:text-xl">{game.phase}</h2>
-              </div>
-            </div>
+            ) : null}
 
             {game.physicalMode ? (
               <div className="rounded-2xl border border-amber-400/30 bg-amber-500/10 p-4 text-sm text-amber-100">
@@ -825,6 +829,43 @@ export default function Home() {
                     <span className="font-semibold">{currentPlayer?.name ?? "Unknown"}</span>
                   </div>
                 </div>
+
+                {game.phase === "lobby" ? (
+                  <div className="rounded-3xl border border-amber-400/30 bg-slate-900/70 p-5 shadow-xl shadow-slate-950/20 sm:p-6">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.3em] text-amber-300">Lobby</p>
+                        <h2 className="mt-2 text-2xl font-black text-white">Players in this room</h2>
+                      </div>
+                      <span className="rounded-full bg-amber-500/15 px-3 py-1 text-sm font-semibold text-amber-100">
+                        {game.players.length} joined
+                      </span>
+                    </div>
+                    <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {game.players.map((player) => (
+                        <div key={player.name} className="flex items-center gap-3 rounded-2xl border border-slate-700 bg-slate-950/60 p-4">
+                          <span className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-900 text-2xl">{player.avatar}</span>
+                          <div>
+                            <p className="font-bold text-white">{player.name}</p>
+                            {player.name === game.temporaryModerator ? (
+                              <p className="text-xs uppercase tracking-[0.2em] text-amber-300">Moderator</p>
+                            ) : (
+                              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Player</p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="mt-4 text-sm text-slate-300">
+                      Share room code <span className="font-bold text-white">{game.code}</span>. Players can join until you start the game.
+                    </p>
+                    {notice ? (
+                      <p className="mt-4 rounded-2xl border border-slate-700 bg-slate-950/60 p-3 text-sm text-slate-200" role="status">
+                        {notice}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
 
                 <div className="rounded-2xl border border-slate-700 bg-slate-950/80 px-4 py-3 text-sm text-slate-200">
                   {game.phase === "lobby"

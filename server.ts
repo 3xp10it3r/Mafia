@@ -72,8 +72,13 @@ app.prepare().then(() => {
         message?: string;
       }) => {
         try {
+          const requestedRoomCode = payload.roomCode?.trim().toUpperCase();
+          if (!requestedRoomCode || socket.data.roomCode !== requestedRoomCode || socket.data.playerName !== payload.actor) {
+            throw new Error("This socket is not authorized for that room action.");
+          }
+
           const nextRoom = applyAction(payload);
-          const roomCode = payload.roomCode?.trim().toUpperCase() ?? nextRoom.code;
+          const roomCode = requestedRoomCode;
           io.to(roomCode).emit("room:update", nextRoom);
         } catch (error) {
           socket.emit("room:error", {

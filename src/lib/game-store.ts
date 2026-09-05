@@ -169,6 +169,27 @@ function finishRound(room: GameState): void {
   room.pendingKillTarget = null;
 }
 
+function updateWinnerState(room: GameState): boolean {
+  const aliveMafia = getMafiaAlive(room);
+  const aliveVillagers = getVillagerAlive(room);
+
+  if (aliveMafia.length === 0) {
+    room.winner = "villager";
+    room.phase = "game-over";
+    room.log.unshift("The mafia has been eliminated. Villagers win.");
+    return true;
+  }
+
+  if (aliveMafia.length >= aliveVillagers.length) {
+    room.winner = "mafia";
+    room.phase = "game-over";
+    room.log.unshift("The mafia has overrun the town. Mafia wins.");
+    return true;
+  }
+
+  return false;
+}
+
 function resolveVotes(room: GameState): void {
   const livingPlayers = getLivingPlayers(room);
   const voteCounts: Record<string, number> = {};
@@ -233,7 +254,7 @@ export function joinPlayerToRoom(roomCode: string, playerName: string): GameStat
   if (room.phase !== "lobby") {
     throw new Error("This room has already started.");
   }
-  if (room.players.some((player) => player.name === playerName)) {
+  if (room.players.some((player) => player.name.toLowerCase() === playerName.toLowerCase())) {
     return room;
   }
 
@@ -276,6 +297,9 @@ export function applyAction({
   }
 
   if (action === "restart") {
+    if (!actor || actor !== room.temporaryModerator) {
+      throw new Error("Only the room moderator can restart the game.");
+    }
     const names = room.players.map((player) => player.name);
     const restartedPlayers = buildRoles(names, room.mafiaCount).map((player) => {
       const previous = room.players.find((entry) => entry.name === player.name);
@@ -303,6 +327,9 @@ export function applyAction({
   }
 
   if (action === "start-game") {
+    if (!actor || actor !== room.temporaryModerator) {
+      throw new Error("Only the room moderator can start the game.");
+    }
     if (room.phase !== "lobby") {
       throw new Error("The game has already started.");
     }
@@ -344,7 +371,7 @@ export function applyAction({
     const mafiaActor = room.players.find((player) => player.name === actor);
     const targetPlayer = room.players.find((player) => player.name === target);
 
-    if (!mafiaActor || mafiaActor.role !== "mafia") {
+    if (!mafiaActor || !mafiaActor.isAlive || mafiaActor.role !== "mafia") {
       throw new Error("Only mafia members may perform a mafia kill.");
     }
 
@@ -352,10 +379,18 @@ export function applyAction({
       throw new Error("The target must be alive.");
     }
 
-    room.pendingKillTarget = target;
-    room.phase = "village-vote";
+    if (targetPlayer.name === mafiaActor.name) {
+      throw new Error("A mafia player cannot target themselves.");
+    }
+
+    targetPlayer.isAlive = false;
+    targetPlayer.wasEliminated = true;
+    room.pendingKillTarget = null;
+    room.log.unshift(`${targetPlayer.name} was eliminated by the mafia.`);
+    if (!updateWinnerState(room)) {
+      room.phase = "village-vote";
+    }
     room.updatedAt = new Date().toISOString();
-    room.log.unshift(`${mafiaActor.name} marked ${targetPlayer.name} for the mafia hit.`);
     return upsertRoom(room);
   }
 

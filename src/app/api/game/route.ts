@@ -9,7 +9,7 @@ export async function GET(request: Request) {
   if (roomCode) {
     const room = getGameByCode(roomCode);
     if (!room) {
-      return NextResponse.json({ error: "Room not found." }, { status: 404 });
+      return NextResponse.json({ error: "Room not found.", field: "joinCode" }, { status: 404 });
     }
     return NextResponse.json(room);
   }
@@ -33,7 +33,7 @@ export async function POST(request: Request) {
     if (action === "create") {
       const room = createGame({
         roomName: payload.roomName,
-        mode: payload.mode,
+        mode: "without-god",
         mafiaCount: payload.mafiaCount,
         moderatorName: payload.moderatorName,
         players: Array.isArray(payload.players) ? payload.players : [],
@@ -49,13 +49,13 @@ export async function POST(request: Request) {
     if (action === "join") {
       const room = getGameByCode(payload.roomCode);
       if (!room) {
-        return NextResponse.json({ error: "Room code not found." }, { status: 404 });
+        return NextResponse.json({ error: "Room code not found.", field: "joinCode" }, { status: 404 });
       }
       if (room.password && room.password !== (payload.password ?? "")) {
-        return NextResponse.json({ error: "Incorrect room password." }, { status: 401 });
+        return NextResponse.json({ error: "Incorrect room password.", field: "joinPassword" }, { status: 401 });
       }
       if (!payload.playerName?.trim()) {
-        return NextResponse.json({ error: "Player name is required." }, { status: 400 });
+        return NextResponse.json({ error: "Player name is required.", field: "joinName" }, { status: 400 });
       }
 
       const nextRoom = joinPlayerToRoom(room.code, payload.playerName.trim());
@@ -74,6 +74,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unsupported action" }, { status: 400 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Something went wrong.";
-    return NextResponse.json({ error: message }, { status: 400 });
+    return NextResponse.json({ error: message, field: "form" }, { status: 400 });
   }
 }

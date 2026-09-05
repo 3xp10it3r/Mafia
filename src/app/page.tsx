@@ -665,21 +665,19 @@ export default function Home() {
                   {fieldErrors.moderatorName ? <p className="mt-2 text-sm text-red-300">{fieldErrors.moderatorName}</p> : null}
                 </div>
 
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-200">Room password</label>
-                    <input
-                      type="password"
-                      value={roomPassword}
-                      onChange={(event) => {
-                        setRoomPassword(event.target.value);
-                        if (fieldErrors.roomPassword) setFieldErrors((current) => ({ ...current, roomPassword: "" }));
-                      }}
-                      className={`w-full rounded-2xl border bg-slate-950/70 px-4 py-3 text-white outline-none transition duration-200 focus:ring-2 ${fieldErrors.roomPassword ? "border-red-400 focus:border-red-400 focus:ring-red-500/30" : "border-slate-700 focus:border-amber-400 focus:ring-amber-500/30"}`}
-                      placeholder="Enter a room password"
-                    />
-                    {fieldErrors.roomPassword ? <p className="mt-2 text-sm text-red-300">{fieldErrors.roomPassword}</p> : null}
-                  </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-slate-200">Room password</label>
+                  <input
+                    type="password"
+                    value={roomPassword}
+                    onChange={(event) => {
+                      setRoomPassword(event.target.value);
+                      if (fieldErrors.roomPassword) setFieldErrors((current) => ({ ...current, roomPassword: "" }));
+                    }}
+                    className={`w-full rounded-2xl border bg-slate-950/70 px-4 py-3 text-white outline-none transition duration-200 focus:ring-2 ${fieldErrors.roomPassword ? "border-red-400 focus:border-red-400 focus:ring-red-500/30" : "border-slate-700 focus:border-amber-400 focus:ring-amber-500/30"}`}
+                    placeholder="Enter a room password"
+                  />
+                  {fieldErrors.roomPassword ? <p className="mt-2 text-sm text-red-300">{fieldErrors.roomPassword}</p> : null}
                 </div>
 
                 <button

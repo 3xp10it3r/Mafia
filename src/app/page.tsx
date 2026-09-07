@@ -479,7 +479,7 @@ export default function Home() {
   const survivingPlayers = game ? game.players.filter((player) => player.isAlive).map((player) => player.name) : [];
   const winnerTone = game?.winner === "mafia" ? "mafia" : "villager";
   const innocentDeclarationsCount = game?.innocentDeclarationsCount ?? 0;
-  const livingVillagerCount = game?.livingVillagerCount ?? 0;
+  const livingPlayerCount = game?.players.filter((player) => player.isAlive).length ?? 0;
   const privatePendingTarget = currentPlayer?.role === "mafia" ? game?.pendingKillTarget : null;
   const playerProgress = !game
     ? "WAITING"
@@ -905,11 +905,7 @@ export default function Home() {
                   {game.phase === "lobby"
                     ? "WAITING — the moderator will start when everyone is ready."
                     : isNightPhase
-                      ? game.hasDeclaredInnocent && !privatePendingTarget
-                        ? "NIGHT — waiting for the Mafia to choose a target."
-                        : privatePendingTarget
-                          ? "NIGHT — target selected; waiting for the villagers."
-                          : "NIGHT — confirm I'm Innocent when ready."
+                      ? "NIGHT — complete your vote when ready."
                       : "DAY — who do you suspect?"}
                  </div>
                  {game.phase !== "lobby" && !game.winner ? (
@@ -917,7 +913,7 @@ export default function Home() {
                     Your status: <span className="font-black">{playerProgress}</span>
                     {isNightPhase ? (
                       <span className="ml-2 text-sky-200">
-                        ({innocentDeclarationsCount}/{livingVillagerCount} innocent)
+                        ({innocentDeclarationsCount}/{livingPlayerCount} votes)
                       </span>
                     ) : null}
                 </div>
@@ -1038,7 +1034,7 @@ export default function Home() {
                       disabled={isBusy}
                       className="w-full rounded-2xl border border-emerald-400/40 bg-emerald-500/15 px-4 py-3 font-bold text-emerald-100 shadow-lg shadow-emerald-950/20 disabled:opacity-60"
                     >
-                      {game.hasDeclaredInnocent ? "You&apos;re marked complete." : "I&apos;m Innocent"}
+                      {game.hasDeclaredInnocent ? "You're marked complete." : "I'm Innocent"}
                     </button>
                   ) : null}
 
@@ -1132,15 +1128,13 @@ export default function Home() {
                   <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Round progress</p>
                   <p className="mt-3 text-lg font-semibold text-white">
                     {isNightPhase
-                      ? `${innocentDeclarationsCount} of ${livingVillagerCount} living villagers are complete.`
+                      ? `${innocentDeclarationsCount} of ${livingPlayerCount} votes complete.`
                       : currentPlayer && game.votedPlayers.includes(currentPlayer.name)
                         ? "Your suspicion has been recorded. Waiting for the other players."
                         : "Choose one living suspect."}
                   </p>
-                  {privatePendingTarget ? (
-                    <p className="mt-2 text-sm text-amber-200">Target selected — waiting for villagers.</p>
-                  ) : isNightPhase && game.hasDeclaredInnocent ? (
-                    <p className="mt-2 text-sm text-sky-200">Waiting for the Mafia to choose a target.</p>
+                  {isNightPhase && game.hasDeclaredInnocent ? (
+                    <p className="mt-2 text-sm text-sky-200">Your vote is recorded.</p>
                   ) : null}
                 </div>
               </div>

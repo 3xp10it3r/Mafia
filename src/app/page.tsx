@@ -48,6 +48,23 @@ export default function Home() {
   const [showRules, setShowRules] = useState(false);
   const socketRef = useRef<Socket | null>(null);
 
+  function clearLocalSession(message: string) {
+    window.localStorage.removeItem("mafia-room-code");
+    window.localStorage.removeItem("mafia-player-name");
+    window.localStorage.removeItem("mafia-room-password");
+    window.localStorage.removeItem("mafia-room-snapshot");
+    socketRef.current?.disconnect();
+    socketRef.current = null;
+    setGame(null);
+    setMyName("");
+    setJoinCode("");
+    setJoinName("");
+    setJoinPassword("");
+    setTargetChoice("");
+    setIsBusy(false);
+    setNotice(message);
+  }
+
   async function fetchLobbyRooms() {
     try {
       const response = await fetch("/api/game");
@@ -81,15 +98,7 @@ export default function Home() {
         .then((payload) => {
           if (!payload.error && payload.code) {
             if (payload.closed) {
-              window.localStorage.removeItem("mafia-room-code");
-              window.localStorage.removeItem("mafia-player-name");
-              window.localStorage.removeItem("mafia-room-password");
-              window.localStorage.removeItem("mafia-room-snapshot");
-              setGame(null);
-              setMyName("");
-              setJoinCode("");
-              setJoinName("");
-              setNotice("The room was closed.");
+              clearLocalSession("The room was closed.");
               return;
             }
 
@@ -142,6 +151,18 @@ export default function Home() {
   }
 
   useEffect(() => {
+    if (!showRules) {
+      return undefined;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [showRules]);
+
+  useEffect(() => {
     if (typeof window !== "undefined" && game?.code) {
       window.localStorage.setItem("mafia-room-code", game.code);
       if (myName) {
@@ -186,6 +207,7 @@ export default function Home() {
       currentPlayer.isAlive &&
       currentPlayer.role === "mafia" &&
       game.phase === "mafia-turn" &&
+      !game.mafiaVotesByPlayer?.[currentPlayer.name] &&
       game.winner === null,
   );
 
@@ -240,12 +262,7 @@ export default function Home() {
     });
 
     socket.on("room:closed", () => {
-      window.localStorage.removeItem("mafia-room-code");
-      window.localStorage.removeItem("mafia-player-name");
-      window.localStorage.removeItem("mafia-room-password");
-      window.localStorage.removeItem("mafia-room-snapshot");
-      setGame(null);
-      setNotice("The moderator closed this room.");
+      clearLocalSession("The moderator closed this room.");
     });
 
     socket.on("room:error", ({ message }: { message: string }) => {
@@ -487,27 +504,27 @@ export default function Home() {
   }
 
   async function leaveRoom() {
-    if (!game || !currentPlayer || isBusy) return;
+    if (!game || isBusy) return;
     if (!window.confirm("Are you sure you want to quit the game?")) return;
-    setIsBusy(true);
-    const response = await fetch("/api/game", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "leave-room", roomCode: game.code, actor: currentPlayer.name }),
-    });
-    const payload = await response.json();
-    setIsBusy(false);
-    if (payload.error) {
-      setNotice(payload.error);
+
+    if (!currentPlayer) {
+      clearLocalSession("You left the room.");
       return;
     }
-    window.localStorage.removeItem("mafia-room-code");
-    window.localStorage.removeItem("mafia-player-name");
-    window.localStorage.removeItem("mafia-room-password");
-    window.localStorage.removeItem("mafia-room-snapshot");
-    setGame(null);
-    setMyName("");
-    setNotice(payload.closed ? "The game ended because a player left." : "You left the room.");
+
+    setIsBusy(true);
+    try {
+      const response = await fetch("/api/game", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "leave-room", roomCode: game.code, actor: currentPlayer.name }),
+        signal: AbortSignal.timeout(8000),
+      });
+      const payload = await response.json();
+      clearLocalSession(payload.error ? "You left the room on this device." : payload.closed ? "The game ended because a player left." : "You left the room.");
+    } catch {
+      clearLocalSession("You left the room on this device. The server could not be reached.");
+    }
   }
 
   const generalSummary = useMemo(() => {
@@ -583,9 +600,9 @@ export default function Home() {
         </header>
 
         {showRules ? (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/85 p-3 backdrop-blur-md sm:p-6" role="dialog" aria-modal="true" aria-labelledby="rules-title">
-            <section className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-amber-400/30 bg-slate-900 shadow-2xl shadow-black/50">
-              <div className="flex items-start justify-between gap-4 border-b border-white/10 p-5 sm:p-7">
+          <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-950/85 p-0 backdrop-blur-md sm:items-center sm:p-6" role="dialog" aria-modal="true" aria-labelledby="rules-title">
+            <section className="flex max-h-[100dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-3xl border border-amber-400/30 bg-slate-900 shadow-2xl shadow-black/50 sm:max-h-[92vh] sm:rounded-3xl">
+              <div className="flex items-start justify-between gap-4 border-b border-white/10 p-5 pt-[max(1.25rem,env(safe-area-inset-top))] sm:p-7">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.3em] text-amber-300">Welcome to Mafia Game</p>
                   <h2 id="rules-title" className="mt-2 text-2xl font-black text-white sm:text-4xl">How to play</h2>
@@ -594,7 +611,7 @@ export default function Home() {
                   ×
                 </button>
               </div>
-              <div className="overflow-y-auto p-5 sm:p-7">
+              <div className="min-h-0 overflow-y-auto p-5 sm:p-7">
                 <div className="space-y-6 text-sm leading-7 text-slate-300 sm:text-base">
                   <div>
                     <h3 className="font-bold text-white">1. Create or join a private room</h3>
@@ -622,7 +639,7 @@ export default function Home() {
                   </div>
                 </div>
               </div>
-              <div className="border-t border-white/10 p-5 sm:p-7">
+              <div className="border-t border-white/10 p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:p-7">
                 <button type="button" onClick={dismissRules} className="w-full rounded-2xl bg-gradient-to-r from-amber-400 to-orange-500 px-5 py-3 font-bold text-slate-950 shadow-lg shadow-amber-950/30">
                   I understand — start playing
                 </button>
@@ -642,6 +659,7 @@ export default function Home() {
                     type="number"
                     min={1}
                     max={10}
+                    inputMode="numeric"
                     value={mafiaCount}
                     onChange={(event) => setMafiaCount(Number(event.target.value) || 1)}
                     className="w-full rounded-2xl border border-slate-700 bg-slate-950/70 px-4 py-3 text-white outline-none transition duration-200 focus:border-amber-400 focus:ring-2 focus:ring-amber-500/30"
@@ -1084,8 +1102,8 @@ export default function Home() {
                     Start new game
                   </button>
                 ) : null}
-                {game && currentPlayer ? (
-                  <button type="button" onClick={() => void leaveRoom()} className="rounded-2xl border border-red-400/30 bg-red-500/10 px-5 py-3 font-bold text-red-100">
+                {game ? (
+                  <button type="button" onClick={() => void leaveRoom()} disabled={isBusy} className="rounded-2xl border border-red-400/30 bg-red-500/10 px-5 py-3 font-bold text-red-100 disabled:cursor-not-allowed disabled:opacity-60">
                     Quit game
                   </button>
                 ) : null}
@@ -1112,6 +1130,9 @@ export default function Home() {
                             <p className="text-xs uppercase tracking-[0.3em] text-amber-200">Your identity</p>
                             <p className="mt-1 text-2xl font-black text-white">
                               {godIsViewing ? "God sees everyone" : currentPlayer.role === "mafia" ? "Mafia" : "Villager"}
+                            </p>
+                            <p className="mt-1 text-sm text-slate-300">
+                              {game.mafiaCount} Mafia player{game.mafiaCount === 1 ? "" : "s"} are in this game.
                             </p>
                           </div>
                         </div>
@@ -1170,6 +1191,14 @@ export default function Home() {
                   {game.winner ? (
                     <div className="rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-4 text-emerald-100">
                       {game.winner === "mafia" ? "Mafia wins the night." : "Villagers win the town."}
+                    </div>
+                  ) : null}
+
+                  {currentPlayer?.role === "mafia" &&
+                  game.phase === "mafia-turn" &&
+                  game.mafiaVotesByPlayer?.[currentPlayer.name] ? (
+                    <div className="rounded-2xl border border-red-400/30 bg-red-500/10 p-4 text-red-100">
+                      Your target is submitted. Waiting for the other Mafia players.
                     </div>
                   ) : null}
 

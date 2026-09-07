@@ -30,6 +30,7 @@ export interface GameState {
   temporaryModerator: string | null;
   votesByPlayer: Record<string, string>;
   votedPlayers: string[];
+  mafiaVotesByPlayer: Record<string, string>;
   pendingKillTarget: string | null;
   log: string[];
   mafiaChat: MafiaChatMessage[];

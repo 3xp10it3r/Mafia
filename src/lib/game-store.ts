@@ -136,6 +136,7 @@ export function createGame({
     temporaryModerator: creatorName,
     votesByPlayer: {},
     votedPlayers: [],
+    mafiaVotesByPlayer: {},
     pendingKillTarget: null,
     log: [
       `${generatedRoomName} is waiting for players.`,
@@ -173,7 +174,36 @@ function finishRound(room: GameState): void {
   room.round += 1;
   room.votesByPlayer = {};
   room.votedPlayers = [];
+  room.mafiaVotesByPlayer = {};
   room.pendingKillTarget = null;
+}
+
+function resolveMafiaVotes(room: GameState): void {
+  const voteCounts = new Map<string, number>();
+  Object.values(room.mafiaVotesByPlayer).forEach((target) => {
+    voteCounts.set(target, (voteCounts.get(target) ?? 0) + 1);
+  });
+
+  const entries = [...voteCounts.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+  const winner = entries[0];
+  const isTie = winner && entries[1]?.[1] === winner[1];
+
+  if (!winner || isTie) {
+    room.log.unshift("The Mafia could not agree on a target. No one was eliminated.");
+  } else {
+    const target = room.players.find((player) => player.name === winner[0]);
+    if (target?.isAlive) {
+      target.isAlive = false;
+      target.wasEliminated = true;
+      room.pendingKillTarget = target.name;
+      room.log.unshift(`${target.name} was eliminated by the mafia.`);
+    }
+  }
+
+  room.mafiaVotesByPlayer = {};
+  if (!updateWinnerState(room)) {
+    room.phase = "village-vote";
+  }
 }
 
 function updateWinnerState(room: GameState): boolean {
@@ -369,6 +399,7 @@ export function applyAction({
       winner: null,
       votesByPlayer: {},
       votedPlayers: [],
+      mafiaVotesByPlayer: {},
       pendingKillTarget: null,
       log: [
         `${room.roomName} has been reset. A new game is ready.`,
@@ -406,6 +437,7 @@ export function applyAction({
     room.winner = null;
     room.votesByPlayer = {};
     room.votedPlayers = [];
+    room.mafiaVotesByPlayer = {};
     room.pendingKillTarget = null;
     room.log = [
       `${room.roomName} has started. Roles are now in play.`,
@@ -430,7 +462,7 @@ export function applyAction({
       throw new Error("Only mafia members may perform a mafia kill.");
     }
 
-    if (!targetPlayer || !targetPlayer.isAlive) {
+    if (!targetPlayer || !targetPlayer.isAlive || targetPlayer.role === "mafia") {
       throw new Error("The target must be alive.");
     }
 
@@ -438,12 +470,19 @@ export function applyAction({
       throw new Error("A mafia player cannot target themselves.");
     }
 
-    targetPlayer.isAlive = false;
-    targetPlayer.wasEliminated = true;
-    room.pendingKillTarget = null;
-    room.log.unshift(`${targetPlayer.name} was eliminated by the mafia.`);
-    if (!updateWinnerState(room)) {
-      room.phase = "village-vote";
+    room.mafiaVotesByPlayer ??= {};
+    if (room.mafiaVotesByPlayer[mafiaActor.name]) {
+      throw new Error("You have already chosen the Mafia target for this round.");
+    }
+
+    room.mafiaVotesByPlayer[mafiaActor.name] = targetPlayer.name;
+    room.pendingKillTarget = targetPlayer.name;
+    const livingMafia = getMafiaAlive(room);
+    const mafiaVotesCast = livingMafia.filter((player) => room.mafiaVotesByPlayer[player.name]).length;
+    if (mafiaVotesCast >= livingMafia.length) {
+      resolveMafiaVotes(room);
+    } else {
+      room.log.unshift(`${mafiaActor.name} selected a Mafia target.`);
     }
     room.updatedAt = new Date().toISOString();
     return upsertRoom(room);

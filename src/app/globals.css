@@ -34,3 +34,17 @@ select,
 textarea {
   font: inherit;
 }
+
+input,
+select,
+textarea,
+button {
+  touch-action: manipulation;
+}
+
+input,
+select,
+textarea {
+  min-height: 3rem;
+  font-size: 16px;
+}

@@ -1327,14 +1327,16 @@ export default function Home() {
             <div className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 sm:p-6">
               <h3 className="text-xl font-bold text-white">Game log</h3>
               <div className="mt-4 space-y-3">
-                {game.log.map((entry, index) => (
-                  <div
-                    key={`${entry}-${index}`}
-                    className="rounded-2xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-sm text-slate-300"
-                  >
-                    {entry}
-                  </div>
-                ))}
+                {game.log
+  .filter((entry) => !entry.toLowerCase().includes("innocent"))
+  .map((entry, index) => (
+    <div
+      key={`${entry}-${index}`}
+      className="rounded-2xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-sm text-slate-300"
+    >
+      {entry}
+    </div>
+  ))}
               </div>
             </div>
           </section>

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import type { GameState } from "@/lib/game";
+import type { PublicRoomSummary } from "@/lib/game-store";
 
 const confettiPieces = [
   { emoji: "✨", left: "8%", delay: "0s" },
@@ -40,7 +41,7 @@ export default function Home() {
   const [notice, setNotice] = useState("Create or join a room to begin.");
   const [targetChoice, setTargetChoice] = useState("");
   const [isBusy, setIsBusy] = useState(false);
-  const [lobbyRooms, setLobbyRooms] = useState<GameState[]>([]);
+  const [lobbyRooms, setLobbyRooms] = useState<PublicRoomSummary[]>([]);
   const [roomSearch, setRoomSearch] = useState("");
   const [roomFilterStatus, setRoomFilterStatus] = useState<"all" | "locked" | "active" | "finished">("all");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -50,7 +51,6 @@ export default function Home() {
   function clearLocalSession(message: string) {
     window.localStorage.removeItem("mafia-room-code");
     window.localStorage.removeItem("mafia-player-name");
-    window.localStorage.removeItem("mafia-room-password");
     window.localStorage.removeItem("mafia-room-snapshot");
     socketRef.current?.disconnect();
     socketRef.current = null;
@@ -84,14 +84,12 @@ export default function Home() {
         : undefined;
     const savedCode = window.localStorage.getItem("mafia-room-code");
     const savedName = window.localStorage.getItem("mafia-player-name");
-    const savedPassword = window.localStorage.getItem("mafia-room-password") ?? "";
     if (savedCode && savedName) {
       // Restore the browser session before reconnecting the live room.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setJoinCode(savedCode);
       setJoinName(savedName);
       setMyName(savedName);
-      setJoinPassword(savedPassword);
       void fetch(`/api/game?roomCode=${encodeURIComponent(savedCode)}`)
         .then((response) => response.json())
         .then((payload) => {
@@ -104,37 +102,11 @@ export default function Home() {
             setGame(payload);
             setNotice(`Welcome back to ${payload.roomName}.`);
           } else {
-            const snapshot = window.localStorage.getItem("mafia-room-snapshot");
-            if (snapshot) {
-              try {
-                const savedRoom = JSON.parse(snapshot) as GameState;
-                if (savedRoom.code === savedCode) {
-                  setGame(savedRoom);
-                  setNotice("Restored your last room view. Reconnecting to the room server...");
-                  return;
-                }
-              } catch {
-                window.localStorage.removeItem("mafia-room-snapshot");
-              }
-            }
-            setFieldErrors({ joinCode: payload.error ?? "This room is no longer available." });
+            clearLocalSession(payload.error ?? "This room session is no longer available.");
           }
         })
         .catch(() => {
-          const snapshot = window.localStorage.getItem("mafia-room-snapshot");
-          if (snapshot) {
-            try {
-              const savedRoom = JSON.parse(snapshot) as GameState;
-              if (savedRoom.code === savedCode) {
-                setGame(savedRoom);
-                setNotice("Restored your last room view. Reconnecting to the room server...");
-                return;
-              }
-            } catch {
-              window.localStorage.removeItem("mafia-room-snapshot");
-            }
-          }
-          setFieldErrors({ joinCode: "Unable to restore this room right now." });
+          clearLocalSession("Unable to restore this room right now.");
         });
     }
     return () => {
@@ -166,10 +138,6 @@ export default function Home() {
       window.localStorage.setItem("mafia-room-code", game.code);
       if (myName) {
         window.localStorage.setItem("mafia-player-name", myName);
-      }
-      window.localStorage.setItem("mafia-room-snapshot", JSON.stringify(game));
-      if (joinPassword || roomPassword) {
-        window.localStorage.setItem("mafia-room-password", joinPassword || roomPassword);
       }
     }
   }, [game, joinPassword, myName, roomPassword]);
@@ -234,7 +202,7 @@ export default function Home() {
     };
 
     refreshLobby();
-    const timer = window.setInterval(refreshLobby, 15000);
+    const timer = window.setInterval(refreshLobby, 30000);
 
     return () => window.clearInterval(timer);
   }, []);
@@ -250,13 +218,11 @@ export default function Home() {
     socket.on("connect", () => {
       socket.emit("room:join", {
         roomCode: game.code,
-        playerName: myName || currentPlayer?.name,
-        password: joinPassword || roomPassword || window.localStorage.getItem("mafia-room-password") || "",
       });
     });
 
     socket.on("room:update", (updatedRoom: GameState) => {
-      setGame(updatedRoom);
+      setGame((current) => (!current || updatedRoom.updatedAt >= current.updatedAt ? updatedRoom : current));
     });
 
     socket.on("room:closed", () => {
@@ -271,7 +237,7 @@ export default function Home() {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [currentPlayer?.name, game?.code, joinPassword, myName, roomPassword]);
+  }, [game?.code]);
 
   useEffect(() => {
     if (!game?.code) {
@@ -300,7 +266,9 @@ export default function Home() {
     };
 
     void refreshRoom();
-    const timer = window.setInterval(() => void refreshRoom(), 2000);
+    const timer = window.setInterval(() => {
+      if (!socketRef.current?.connected) void refreshRoom();
+    }, 30000);
     return () => {
       stopped = true;
       window.clearInterval(timer);
@@ -357,9 +325,6 @@ export default function Home() {
     setMyName(nextName);
     setJoinCode(payload.code);
     setJoinName(nextName);
-    if (roomPassword.trim()) {
-      window.localStorage.setItem("mafia-room-password", roomPassword.trim());
-    }
     setTargetChoice("");
     setNotice(`${payload.roomName} is ready. Share code ${payload.code} and wait for players to join.`);
     setJoinPassword(roomPassword);
@@ -419,9 +384,6 @@ export default function Home() {
     setMyName(canonicalName);
     setJoinCode(nextCode);
     setJoinName(canonicalName);
-    if (joinPassword) {
-      window.localStorage.setItem("mafia-room-password", joinPassword);
-    }
     setTargetChoice("");
     setNotice(`${payload.roomName} joined successfully. Waiting for the host to start the game.`);
     setFieldErrors({});
@@ -445,7 +407,6 @@ export default function Home() {
     const body: Record<string, string | undefined> = {
       action,
       roomCode: game.code,
-      actor: currentPlayer.name,
     };
 
     if (action === "mafia-kill" || action === "village-vote" || action === "transfer-moderator") {
@@ -469,7 +430,6 @@ export default function Home() {
     if (payload.closed) {
       window.localStorage.removeItem("mafia-room-code");
       window.localStorage.removeItem("mafia-player-name");
-      window.localStorage.removeItem("mafia-room-password");
       window.localStorage.removeItem("mafia-room-snapshot");
       setGame(null);
       setMyName("");
@@ -511,7 +471,7 @@ export default function Home() {
       const response = await fetch("/api/game", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "leave-room", roomCode: game.code, actor: currentPlayer.name }),
+        body: JSON.stringify({ action: "leave-room", roomCode: game.code }),
         signal: AbortSignal.timeout(8000),
       });
       const payload = await response.json();
@@ -526,10 +486,7 @@ export default function Home() {
       return "No active room";
     }
 
-    const living = game.players.filter((player) => player.isAlive);
-    const mafiaAlive = living.filter((player) => player.role === "mafia").length;
-    const villagersAlive = living.filter((player) => player.role === "villager").length;
-    return `Round ${game.round} • ${mafiaAlive} mafia • ${villagersAlive} villagers • ${game.phase}`;
+    return `Round ${game.round} • ${game.mafiaAliveCount} mafia • ${game.villagerAliveCount} villagers • ${game.phase}`;
   }, [game]);
 
   const filteredLobbyRooms = useMemo(() => {
@@ -538,11 +495,9 @@ export default function Home() {
     return lobbyRooms.filter((room) => {
       const matchesSearch =
         !query ||
-        room.roomName.toLowerCase().includes(query) ||
-        room.code.toLowerCase().includes(query) ||
-        room.players.some((player) => player.name.toLowerCase().includes(query));
+        room.roomName.toLowerCase().includes(query) || room.code.toLowerCase().includes(query);
 
-      const roomHasPassword = Boolean(room.password);
+      const roomHasPassword = room.hasPassword;
       const roomIsActive = room.winner === null;
       const matchesStatus =
         roomFilterStatus === "all" ||
@@ -555,13 +510,13 @@ export default function Home() {
   }, [lobbyRooms, roomFilterStatus, roomSearch]);
 
   const isNightPhase = game?.phase === "mafia-turn";
-  const mafiaAliveCount = game ? game.players.filter((player) => player.isAlive && player.role === "mafia").length : 0;
-  const villagerAliveCount = game ? game.players.filter((player) => player.isAlive && player.role === "villager").length : 0;
+  const mafiaAliveCount = game?.mafiaAliveCount ?? 0;
+  const villagerAliveCount = game?.villagerAliveCount ?? 0;
   const survivingPlayers = game ? game.players.filter((player) => player.isAlive).map((player) => player.name) : [];
   const winnerTone = game?.winner === "mafia" ? "mafia" : "villager";
   const lastElimination = game && game.log.length > 0 ? game.log[0] : "No elimination logged yet";
-  const totalVotesCast = game ? Object.keys(game.votesByPlayer).length : 0;
-  const mafiaNames = game ? game.players.filter((player) => player.role === "mafia").map((player) => player.name) : [];
+  const totalVotesCast = game?.votesCast ?? 0;
+  const mafiaNames = game?.revealedMafiaNames ?? [];
   const isModerator = Boolean(game && currentPlayer && game.temporaryModerator === currentPlayer.name);
 
   return (
@@ -765,7 +720,7 @@ export default function Home() {
                   <input
                     value={roomSearch}
                     onChange={(event) => setRoomSearch(event.target.value)}
-                    placeholder="Search rooms or players"
+                    placeholder="Search rooms"
                     className="rounded-2xl border border-slate-700 bg-slate-950/80 px-3 py-2 text-sm text-white outline-none transition duration-200 focus:border-amber-400 focus:ring-2 focus:ring-amber-500/30"
                   />
 
@@ -813,7 +768,7 @@ export default function Home() {
                             <p className="text-base font-bold text-white">{room.roomName}</p>
                             <p className="mt-1 text-xs uppercase tracking-[0.2em] text-slate-400">{room.code}</p>
                           </div>
-                          {room.password ? (
+                          {room.hasPassword ? (
                             <span className="rounded-full border border-amber-400/40 bg-amber-500/10 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-amber-200">
                               Locked
                             </span>
@@ -825,7 +780,7 @@ export default function Home() {
                         </div>
                         <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-300">
                           <span className="rounded-full bg-slate-800 px-2 py-1">{room.mode === "with-god" ? "With God" : "Without God"}</span>
-                          <span className="rounded-full bg-slate-800 px-2 py-1">{room.players.length} players</span>
+                          <span className="rounded-full bg-slate-800 px-2 py-1">{room.playerCount} players</span>
                           <span className="rounded-full bg-slate-800 px-2 py-1">{room.phase}</span>
                           <span className="rounded-full bg-slate-800 px-2 py-1">{room.winner ? "Finished" : "Live"}</span>
                           {room.physicalMode ? (

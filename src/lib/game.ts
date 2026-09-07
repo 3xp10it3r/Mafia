@@ -1,10 +1,12 @@
+import { randomInt } from "node:crypto";
+
 export type GameMode = "with-god" | "without-god";
 export type GamePhase = "lobby" | "mafia-turn" | "village-vote" | "game-over";
 export type Role = "mafia" | "villager";
 
 export interface PlayerState {
   name: string;
-  role: Role;
+  role: Role | null;
   isAlive: boolean;
   avatar: string;
   wasEliminated?: boolean;
@@ -32,16 +34,19 @@ export interface GameState {
   pendingKillTarget: string | null;
   log: string[];
   mafiaChat: MafiaChatMessage[];
-  password: string | null;
   physicalMode: boolean;
   createdAt: string;
   updatedAt: string;
+  mafiaAliveCount: number;
+  villagerAliveCount: number;
+  votesCast: number;
+  revealedMafiaNames: string[];
 }
 
 export function shuffle<T>(items: T[]): T[] {
   const next = [...items];
   for (let index = next.length - 1; index > 0; index -= 1) {
-    const randomIndex = Math.floor(Math.random() * (index + 1));
+    const randomIndex = randomInt(index + 1);
     [next[index], next[randomIndex]] = [next[randomIndex], next[index]];
   }
   return next;
@@ -62,7 +67,7 @@ export const ROOM_NAMES = [
 ];
 
 export function randomRoomName(): string {
-  return ROOM_NAMES[Math.floor(Math.random() * ROOM_NAMES.length)] ?? "The Velvet Dagger";
+  return ROOM_NAMES[randomInt(ROOM_NAMES.length)] ?? "The Velvet Dagger";
 }
 
 export function buildRoles(names: string[]): PlayerState[] {
@@ -78,7 +83,8 @@ export function buildRoles(names: string[]): PlayerState[] {
 }
 
 export function generateRoomCode(): string {
-  return Math.random().toString(36).slice(2, 8).toUpperCase();
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  return Array.from({ length: 6 }, () => alphabet[randomInt(alphabet.length)]).join("");
 }
 
 export function getLivingPlayers(game: GameState): PlayerState[] {

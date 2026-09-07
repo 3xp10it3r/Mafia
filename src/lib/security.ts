@@ -49,14 +49,15 @@ export function validPassword(value: unknown): value is string {
 }
 
 export function requestHasValidOrigin(request: Request): boolean {
-  return true;
-  // const origin = request.headers.get("origin");
-  // if (!origin) return true;
-  // const allowed = process.env.ALLOWED_ORIGIN?.trim();
-  // if (allowed) return origin === allowed;
-  // try {
-  //   return new URL(origin).host === new URL(request.url).host;
-  // } catch {
-  //   return false;
-  // }
+  const origin = request.headers.get("origin")?.trim();
+  if (!origin) return true;
+
+  try {
+    const requestOrigin = new URL(request.url).origin;
+    const configured = process.env.ALLOWED_ORIGIN?.split(",").map((value) => value.trim()).filter(Boolean) ?? [];
+    if (configured.length > 0) return configured.includes(origin);
+    return origin === requestOrigin;
+  } catch {
+    return false;
+  }
 }

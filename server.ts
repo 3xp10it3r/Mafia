@@ -5,6 +5,7 @@ import { Server } from "socket.io";
 import { applyAction, getGameByCode, projectGame } from "./src/lib/game-store";
 import { allowRate, parseSessionCookie, validName, validRoomCode } from "./src/lib/security";
 import { getPlayerSession } from "./src/lib/game-store";
+import type { GameAction } from "./src/lib/game";
 
 const dev = process.env.NODE_ENV !== "production";
 const hostname = "0.0.0.0";
@@ -73,19 +74,13 @@ app.prepare().then(() => {
           if (!activeSession || !validRoomCode(code) || activeSession.roomCode !== code || socket.data.roomCode !== code) {
             throw new Error("This socket is not authorized for that room action.");
           }
-          if (!["mafia-kill", "declare-innocent", "village-suspect", "village-vote", "restart", "start-game", "transfer-moderator"].includes(payload.action ?? "")) {
+          const supportedActions: GameAction[] = ["mafia-kill", "declare-innocent", "village-suspect", "village-vote", "restart", "start-game", "transfer-moderator"];
+          if (!supportedActions.includes(payload.action as GameAction)) {
             throw new Error("Unsupported action.");
           }
           const nextRoom = applyAction({
             roomCode: code,
-            action: payload.action as
-              | "mafia-kill"
-              | "declare-innocent"
-              | "village-suspect"
-              | "village-vote"
-              | "restart"
-              | "start-game"
-              | "transfer-moderator",
+            action: payload.action as GameAction,
             actor: activeSession.playerName,
             target: validName(payload.target) ? payload.target.trim() : undefined,
           });

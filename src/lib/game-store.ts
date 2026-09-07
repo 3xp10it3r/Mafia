@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
-import { AVATAR_POOL, buildRoles, generateRoomCode, getLivingPlayers, getMafiaAlive, getVillagerAlive, randomRoomName, type GameState } from "@/lib/game";
+import { AVATAR_POOL, buildRoles, generateRoomCode, getLivingPlayers, getMafiaAlive, getVillagerAlive, randomRoomName, type GameAction, type GameState, MAX_PLAYERS, MIN_PLAYERS } from "@/lib/game";
 
 const configuredDbPath = process.env.SQLITE_DB_PATH?.trim();
 const isBuild = process.env.NEXT_PHASE === "phase-production-build";
@@ -295,6 +295,9 @@ export function createGame({
   }
 
   const allNames = toUniqueNames([creatorName, ...(players ?? [])]);
+  if (allNames.length > MAX_PLAYERS) {
+    throw new Error(`A room can have at most ${MAX_PLAYERS} players.`);
+  }
   const id = `room-${randomUUID()}`;
   const now = new Date().toISOString();
   const generatedRoomName = (roomName ?? "").trim() || randomRoomName();
@@ -460,13 +463,16 @@ function resolvePendingKill(room: StoredGameState): void {
   if (!allVillagersDeclared) return;
 
   const target = room.players.find((player) => player.name === room.pendingKillTarget);
+  if (!target || !target.isAlive || target.role !== "villager") {
+    // If the pending victim leaves, cancel that selection and keep the night open.
+    room.pendingKillTarget = null;
+    return;
+  }
   room.pendingKillTarget = null;
   room.innocentDeclarations = [];
 
-  if (target?.isAlive && target.role === "villager") {
-    target.isAlive = false;
-    target.wasEliminated = true;
-  }
+  target.isAlive = false;
+  target.wasEliminated = true;
 
   if (!updateWinnerState(room)) {
     room.phase = "village-vote";
@@ -485,6 +491,9 @@ export function joinPlayerToRoom(roomCode: string, playerName: string): StoredGa
   }
   if (room.players.some((player) => player.name.toLowerCase() === playerName.toLowerCase())) {
     return room;
+  }
+  if (room.players.length >= MAX_PLAYERS) {
+    throw new Error(`A room can have at most ${MAX_PLAYERS} players.`);
   }
 
   const nextRoom: StoredGameState = {
@@ -516,7 +525,7 @@ export function leavePlayerFromRoom(roomCode: string, playerName: string): Store
   if (!player) {
     throw new Error("Player is not in this room.");
   }
-  if (player.role === "mafia" || player.name === room.temporaryModerator) {
+  if (player.role === "mafia") {
     deleteRoom(room.code);
     return null;
   }
@@ -534,13 +543,19 @@ export function leavePlayerFromRoom(roomCode: string, playerName: string): Store
       Object.entries(room.votesByPlayer).filter(([voter]) => remainingPlayers.some((entry) => entry.name === voter)),
     ),
     votedPlayers: room.votedPlayers.filter((voter) => remainingPlayers.some((entry) => entry.name === voter)),
-    temporaryModerator: room.temporaryModerator === player.name ? remainingPlayers[0]?.name ?? null : room.temporaryModerator,
+    // Moderator succession is deterministic so every client observes the same owner.
+    temporaryModerator: room.temporaryModerator === player.name
+      ? remainingPlayers.find((entry) => entry.isAlive)?.name ?? remainingPlayers[0]?.name ?? null
+      : room.temporaryModerator,
     log: [...room.log, `${player.name} left the room.`],
     updatedAt: new Date().toISOString(),
   };
 
   if (nextRoom.phase !== "lobby" && player.role === "villager") {
     if (nextRoom.phase === "mafia-turn") {
+      if (nextRoom.pendingKillTarget === player.name) {
+        nextRoom.pendingKillTarget = null;
+      }
       resolvePendingKill(nextRoom);
     } else if (nextRoom.phase === "village-vote" && nextRoom.votedPlayers.length >= getLivingPlayers(nextRoom).length) {
       resolveVotes(nextRoom);
@@ -561,14 +576,7 @@ export function applyAction({
 }: {
   roomId?: string;
   roomCode?: string;
-  action:
-    | "mafia-kill"
-    | "declare-innocent"
-    | "village-suspect"
-    | "village-vote"
-    | "restart"
-    | "start-game"
-    | "transfer-moderator";
+  action: GameAction;
   actor?: string;
   target?: string;
 }): StoredGameState {
@@ -632,8 +640,8 @@ export function applyAction({
     }
 
     const names = room.players.map((player) => player.name);
-    if (names.length < 3) {
-      throw new Error("At least 3 players are required to start the game.");
+    if (names.length < MIN_PLAYERS) {
+      throw new Error(`At least ${MIN_PLAYERS} players are required to start the game.`);
     }
 
     const assignedPlayers = buildRoles(names).map((player) => {
@@ -698,7 +706,7 @@ export function applyAction({
       throw new Error("Only living villagers can declare themselves innocent.");
     }
     if (room.innocentDeclarations.includes(player.name)) {
-      throw new Error("This villager has already declared innocent.");
+      return upsertRoom(room);
     }
     room.innocentDeclarations.push(player.name);
     resolvePendingKill(room);

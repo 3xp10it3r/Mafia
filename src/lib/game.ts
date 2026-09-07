@@ -3,6 +3,17 @@ import { randomInt } from "node:crypto";
 export type GameMode = "with-god" | "without-god";
 export type GamePhase = "lobby" | "mafia-turn" | "village-vote" | "game-over";
 export type Role = "mafia" | "villager";
+export type GameAction =
+  | "mafia-kill"
+  | "declare-innocent"
+  | "village-suspect"
+  | "village-vote"
+  | "restart"
+  | "start-game"
+  | "transfer-moderator";
+
+export const MIN_PLAYERS = 3;
+export const MAX_PLAYERS = 12;
 
 export interface PlayerState {
   name: string;

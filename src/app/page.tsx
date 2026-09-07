@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import type { GameState } from "@/lib/game";
-import type { PublicRoomSummary } from "@/lib/game-store";
+import { MAX_PLAYERS, MIN_PLAYERS, type GameAction } from "@/lib/game";
 
 const confettiPieces = [
   { emoji: "✨", left: "8%", delay: "0s" },
@@ -48,9 +48,6 @@ export default function Home() {
   const [notice, setNotice] = useState("Create or join a room to begin.");
   const [targetChoice, setTargetChoice] = useState("");
   const [isBusy, setIsBusy] = useState(false);
-  const [lobbyRooms, setLobbyRooms] = useState<PublicRoomSummary[]>([]);
-  const [roomSearch, setRoomSearch] = useState("");
-  const [roomFilterStatus, setRoomFilterStatus] = useState<"all" | "locked" | "active" | "finished">("all");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [showRules, setShowRules] = useState(false);
   const socketRef = useRef<Socket | null>(null);
@@ -69,16 +66,6 @@ export default function Home() {
     setTargetChoice("");
     setIsBusy(false);
     setNotice(message);
-  }
-
-  async function fetchLobbyRooms() {
-    try {
-      const response = await fetch("/api/game");
-      const payload = await response.json();
-      setLobbyRooms(Array.isArray(payload.games) ? payload.games : []);
-    } catch {
-      setLobbyRooms([]);
-    }
   }
 
   useEffect(() => {
@@ -202,17 +189,6 @@ export default function Home() {
     !game.hasDeclaredInnocent &&
       game.winner === null,
   );
-
-  useEffect(() => {
-    const refreshLobby = () => {
-      void fetchLobbyRooms();
-    };
-
-    refreshLobby();
-    const timer = window.setInterval(refreshLobby, 30000);
-
-    return () => window.clearInterval(timer);
-  }, []);
 
   useEffect(() => {
     if (!game?.code) {
@@ -397,7 +373,7 @@ export default function Home() {
   }
 
   async function runAction(
-    action: "mafia-kill" | "declare-innocent" | "village-suspect" | "village-vote" | "restart" | "start-game" | "transfer-moderator",
+    action: GameAction,
     targetOverride?: string,
   ) {
     if (!game || !currentPlayer) {
@@ -499,26 +475,6 @@ export default function Home() {
     return `Round ${game.round}`;
   }, [game]);
 
-  const filteredLobbyRooms = useMemo(() => {
-    const query = roomSearch.trim().toLowerCase();
-
-    return lobbyRooms.filter((room) => {
-      const matchesSearch =
-        !query ||
-        room.roomName.toLowerCase().includes(query) || room.code.toLowerCase().includes(query);
-
-      const roomHasPassword = room.hasPassword;
-      const roomIsActive = room.winner === null;
-      const matchesStatus =
-        roomFilterStatus === "all" ||
-        (roomFilterStatus === "locked" && roomHasPassword) ||
-        (roomFilterStatus === "active" && roomIsActive) ||
-        (roomFilterStatus === "finished" && !roomIsActive);
-
-      return matchesSearch && matchesStatus;
-    });
-  }, [lobbyRooms, roomFilterStatus, roomSearch]);
-
   const isNightPhase = game?.phase === "mafia-turn";
   const survivingPlayers = game ? game.players.filter((player) => player.isAlive).map((player) => player.name) : [];
   const winnerTone = game?.winner === "mafia" ? "mafia" : "villager";
@@ -590,7 +546,7 @@ export default function Home() {
                 <div className="space-y-6 text-sm leading-7 text-slate-300 sm:text-base">
                   <div>
                     <h3 className="font-bold text-white">1. Create or join a private room</h3>
-                    <p>Create a room with a password and share the room code and password with your friends. Each game has one hidden Mafia player, and everyone joins the lobby using their own name.</p>
+                    <p>Create a password-protected room and share the room code and password with your friends. Games support {MIN_PLAYERS}–{MAX_PLAYERS} players and always have one hidden Mafia player.</p>
                   </div>
                   <div>
                     <h3 className="font-bold text-white">2. Start the game</h3>
@@ -598,19 +554,19 @@ export default function Home() {
                   </div>
                   <div>
                     <h3 className="font-bold text-white">3. Mafia turn</h3>
-                    <p>The Mafia player quietly touches the player they want to eliminate, then selects that player in the app. The target stays pending while every living villager confirms they are innocent.</p>
+                    <p>The Mafia player privately selects a victim. The target stays pending while every living villager confirms <strong className="text-emerald-200">I&apos;m Innocent</strong>; the night resolves only after both steps are complete.</p>
                   </div>
                   <div>
                     <h3 className="font-bold text-white">4. Innocent check</h3>
                     <p>During the Mafia turn, villagers tap only <strong className="text-emerald-200">I&apos;m innocent</strong> on their own device view. This prevents villagers from seeing or guessing the Mafia when playing physically in the same room.</p>
                   </div>
                   <div>
-                    <h3 className="font-bold text-white">5. Village vote</h3>
-                    <p>After the Mafia action, discuss in person. Every living player votes for one suspect. The player with the most votes is eliminated; ties do not eliminate anyone.</p>
+                    <h3 className="font-bold text-white">5. Day suspicion</h3>
+                    <p>During the day, discuss in person. Every living player chooses who they suspect. The player with the most votes is eliminated; ties do not eliminate anyone.</p>
                   </div>
                   <div>
                     <h3 className="font-bold text-white">6. Winning and leaving</h3>
-                    <p>Villagers win when the Mafia player is eliminated. Mafia wins when the Mafia player equals or outnumbers the living villagers. If the Mafia player or the moderator quits, the game ends immediately. Any player can quit after confirming.</p>
+                    <p>Villagers win when the Mafia player is eliminated. Mafia wins when the Mafia player equals or outnumbers the living villagers. If the Mafia player quits, the room closes. If the moderator quits, moderator rights transfer to the first remaining living player.</p>
                   </div>
                 </div>
               </div>
@@ -628,6 +584,9 @@ export default function Home() {
             <div className="rounded-3xl border border-amber-400/20 bg-slate-900/70 p-5 shadow-[0_18px_50px_rgba(15,23,42,0.45)] backdrop-blur-sm transition-all duration-500 hover:border-amber-400/45 hover:shadow-[0_18px_60px_rgba(251,191,36,0.08)] sm:p-6">
               <h2 className="text-2xl font-bold text-white">Create a room</h2>
               <form onSubmit={createRoom} className="mt-6 space-y-5">
+                <p className="rounded-2xl border border-amber-400/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                  Password protected · {MIN_PLAYERS}–{MAX_PLAYERS} players
+                </p>
                 <div>
                   <label className="mb-2 block text-sm font-medium text-slate-200">Your name</label>
                   <input
@@ -728,95 +687,6 @@ export default function Home() {
                     {isBusy ? "Joining..." : "Join room"}
                   </button>
                 </form>
-              </div>
-
-              <div className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.34)] backdrop-blur-sm transition-all duration-500 hover:border-amber-400/30 sm:p-6">
-                <div className="flex items-center justify-between gap-3">
-                  <h3 className="text-xl font-bold text-white">Lobby</h3>
-                  <button
-                    type="button"
-                    onClick={() => void fetchLobbyRooms()}
-                    className="rounded-xl border border-slate-700 bg-slate-950/60 px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-200 transition hover:border-amber-400/60 hover:text-amber-200"
-                  >
-                    Refresh
-                  </button>
-                </div>
-
-                <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                  <input
-                    value={roomSearch}
-                    onChange={(event) => setRoomSearch(event.target.value)}
-                    placeholder="Search rooms"
-                    className="rounded-2xl border border-slate-700 bg-slate-950/80 px-3 py-2 text-sm text-white outline-none transition duration-200 focus:border-amber-400 focus:ring-2 focus:ring-amber-500/30"
-                  />
-
-                  <select
-                    value={roomFilterStatus}
-                    onChange={(event) => setRoomFilterStatus(event.target.value as "all" | "locked" | "active" | "finished")}
-                    className="rounded-2xl border border-slate-700 bg-slate-950/80 px-3 py-2 text-sm text-white outline-none transition duration-200 focus:border-amber-400 focus:ring-2 focus:ring-amber-500/30"
-                  >
-                    <option value="all">All rooms</option>
-                    <option value="locked">Locked</option>
-                    <option value="active">In progress</option>
-                    <option value="finished">Finished</option>
-                  </select>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRoomSearch("");
-                      setRoomFilterStatus("all");
-                    }}
-                    className="rounded-2xl border border-slate-700 bg-slate-950/80 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-sky-400 hover:text-sky-200"
-                  >
-                    Reset filters
-                  </button>
-                </div>
-
-                <div className="mt-4 space-y-3">
-                  {filteredLobbyRooms.length === 0 ? (
-                    <p className="rounded-2xl border border-dashed border-slate-700 bg-slate-950/40 p-4 text-sm text-slate-400">
-                      No rooms match the current filters. Try another search or create a fresh room.
-                    </p>
-                  ) : (
-                    filteredLobbyRooms.map((room) => (
-                      <button
-                        type="button"
-                        key={room.id}
-                        onClick={() => {
-                          setJoinCode(room.code);
-                          setNotice(`${room.roomName} is ready for joining. Use code ${room.code}.`);
-                        }}
-                        className="w-full rounded-2xl border border-slate-700 bg-slate-950/60 p-4 text-left transition duration-200 hover:border-amber-400/60 hover:bg-slate-900 hover:shadow-[0_12px_28px_rgba(251,191,36,0.08)]"
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <p className="text-base font-bold text-white">{room.roomName}</p>
-                            <p className="mt-1 text-xs uppercase tracking-[0.2em] text-slate-400">{room.code}</p>
-                          </div>
-                          {room.hasPassword ? (
-                            <span className="rounded-full border border-amber-400/40 bg-amber-500/10 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-amber-200">
-                              Locked
-                            </span>
-                          ) : (
-                            <span className="rounded-full border border-emerald-400/40 bg-emerald-500/10 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-200">
-                              Open
-                            </span>
-                          )}
-                        </div>
-                        <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-300">
-                          <span className="rounded-full bg-slate-800 px-2 py-1">{room.mode === "with-god" ? "With God" : "Without God"}</span>
-                          <span className="rounded-full bg-slate-800 px-2 py-1">{room.playerCount} players</span>
-                          <span className="rounded-full bg-slate-800 px-2 py-1">{phaseLabel(room.phase)}</span>
-                          <span className="rounded-full bg-slate-800 px-2 py-1">{room.winner ? "Finished" : "Live"}</span>
-                          {room.physicalMode ? (
-                            <span className="rounded-full bg-amber-500/15 px-2 py-1 text-amber-100">Physical play</span>
-                          ) : null}
-                        </div>
-                      </button>
-                    ))
-                  )}
-                </div>
               </div>
 
               <div className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-slate-950/20 sm:p-6">
@@ -1035,8 +905,12 @@ export default function Home() {
                   {game.phase === "lobby"
                     ? "WAITING — the moderator will start when everyone is ready."
                     : isNightPhase
-                      ? "NIGHT — each living villager must confirm innocence before the target is completed."
-                      : "DAY — choose one living suspect."}
+                      ? game.hasDeclaredInnocent && !privatePendingTarget
+                        ? "NIGHT — waiting for the Mafia to choose a target."
+                        : privatePendingTarget
+                          ? "NIGHT — target selected; waiting for the villagers."
+                          : "NIGHT — confirm I'm Innocent when ready."
+                      : "DAY — who do you suspect?"}
                  </div>
                  {game.phase !== "lobby" && !game.winner ? (
                   <div className="rounded-2xl border border-sky-300/20 bg-sky-500/10 px-4 py-3 text-sm text-sky-100">
@@ -1098,7 +972,9 @@ export default function Home() {
                           </div>
                         </div>
                         {!godIsViewing && currentPlayer.role === "mafia" && game.phase === "mafia-turn" ? (
-                          <p className="mt-2 text-sm text-amber-100">You may choose a target to eliminate.</p>
+                          <p className="mt-2 text-sm text-amber-100">
+                            {privatePendingTarget ? "Target selected — waiting for villagers. You can change it." : "Set a target; it will remain pending until villagers confirm."}
+                          </p>
                         ) : null}
                       </div>
                     )}
@@ -1162,13 +1038,13 @@ export default function Home() {
                       disabled={isBusy}
                       className="w-full rounded-2xl border border-emerald-400/40 bg-emerald-500/15 px-4 py-3 font-bold text-emerald-100 shadow-lg shadow-emerald-950/20 disabled:opacity-60"
                     >
-                      I&apos;m innocent
+                      {game.hasDeclaredInnocent ? "You&apos;re marked complete." : "I&apos;m Innocent"}
                     </button>
                   ) : null}
 
                   {canMafiaAct ? (
                     <div className="space-y-3">
-                      <label className="block text-sm font-medium text-slate-200">Choose a target</label>
+                      <label className="block text-sm font-medium text-slate-200">Select a victim</label>
                       <select
                         value={targetChoice || privatePendingTarget || ""}
                         onChange={(event) => setTargetChoice(event.target.value)}
@@ -1187,7 +1063,7 @@ export default function Home() {
                         disabled={isBusy || !targetChoice}
                         className="w-full rounded-2xl bg-gradient-to-r from-red-500 to-rose-500 px-4 py-3 font-bold text-white shadow-lg shadow-red-950/30 disabled:opacity-60"
                       >
-                        Confirm mafia kill
+                        {privatePendingTarget ? "Change target" : "Set target"}
                       </button>
                     </div>
                   ) : null}
@@ -1262,7 +1138,9 @@ export default function Home() {
                         : "Choose one living suspect."}
                   </p>
                   {privatePendingTarget ? (
-                    <p className="mt-2 text-sm text-amber-200">Your target is pending completion.</p>
+                    <p className="mt-2 text-sm text-amber-200">Target selected — waiting for villagers.</p>
+                  ) : isNightPhase && game.hasDeclaredInnocent ? (
+                    <p className="mt-2 text-sm text-sky-200">Waiting for the Mafia to choose a target.</p>
                   ) : null}
                 </div>
               </div>

@@ -8,9 +8,7 @@ import {
   getGameById,
   joinPlayerToRoom,
   leavePlayerFromRoom,
-  listGames,
   projectGame,
-  toPublicRoomSummary,
   verifyRoomPassword,
 } from "@/lib/game-store";
 import {
@@ -24,6 +22,7 @@ import {
   validRoomCode,
   SESSION_COOKIE,
 } from "@/lib/security";
+import type { GameAction } from "@/lib/game";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -68,8 +67,7 @@ export async function GET(request: Request) {
     return NextResponse.json(projectGame(room, session.playerName), { headers: noStore });
   }
 
-  if (!allowRate(`rooms:${clientAddress(request)}`, 60, 60_000)) return errorResponse("Too many requests. Try again shortly.", 429);
-  return NextResponse.json({ games: listGames().map(toPublicRoomSummary) }, { headers: noStore });
+  return NextResponse.json({ games: [] }, { headers: noStore });
 }
 
 export async function POST(request: Request) {
@@ -128,16 +126,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ closed: true }, { headers: noStore });
     }
 
-    if (["mafia-kill", "declare-innocent", "village-suspect", "village-vote", "restart", "start-game", "transfer-moderator"].includes(action)) {
+    const supportedActions: GameAction[] = ["mafia-kill", "declare-innocent", "village-suspect", "village-vote", "restart", "start-game", "transfer-moderator"];
+    if (supportedActions.includes(action as GameAction)) {
       const nextRoom = applyAction({
-        action: action as
-          | "mafia-kill"
-          | "declare-innocent"
-          | "village-suspect"
-          | "village-vote"
-          | "restart"
-          | "start-game"
-          | "transfer-moderator",
+        action: action as GameAction,
         roomCode: room.code,
         actor: session.playerName,
         target: validName(payload.target) ? payload.target.trim() : undefined,

@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "NODE_ENV=production tsx server.ts",
     "lint": "eslint",
-    "test": "tsx --test src/lib/game-store.test.ts"
+    "test": "tsx --test src/lib/*.test.ts src/app/api/game/route.test.ts"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

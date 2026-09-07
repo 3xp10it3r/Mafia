@@ -33,7 +33,6 @@ const winnerBadgeLabel = {
 export default function Home() {
   const [roomPassword, setRoomPassword] = useState("");
   const [joinPassword, setJoinPassword] = useState("");
-  const [mafiaCount, setMafiaCount] = useState(1);
   const [myName, setMyName] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [joinName, setJoinName] = useState("");
@@ -207,7 +206,6 @@ export default function Home() {
       currentPlayer.isAlive &&
       currentPlayer.role === "mafia" &&
       game.phase === "mafia-turn" &&
-      !game.mafiaVotesByPlayer?.[currentPlayer.name] &&
       game.winner === null,
   );
 
@@ -321,9 +319,6 @@ export default function Home() {
     if (!nextName) {
       nextErrors.moderatorName = "Please enter your name.";
     }
-    if (mafiaCount < 1) {
-      nextErrors.mafiaCount = "At least 1 mafia is required.";
-    }
     if (!roomPassword.trim()) {
       nextErrors.roomPassword = "A room password is required.";
     }
@@ -342,7 +337,6 @@ export default function Home() {
       body: JSON.stringify({
         action: "create",
         mode: "without-god",
-        mafiaCount,
         moderatorName: nextName,
         players: [],
         password: roomPassword.trim() || undefined,
@@ -615,7 +609,7 @@ export default function Home() {
                 <div className="space-y-6 text-sm leading-7 text-slate-300 sm:text-base">
                   <div>
                     <h3 className="font-bold text-white">1. Create or join a private room</h3>
-                    <p>Create a room with a password, choose the number of Mafia players, and share the room code and password with your friends. Everyone joins the lobby using their own name.</p>
+                    <p>Create a room with a password and share the room code and password with your friends. Each game has one hidden Mafia player, and everyone joins the lobby using their own name.</p>
                   </div>
                   <div>
                     <h3 className="font-bold text-white">2. Start the game</h3>
@@ -635,7 +629,7 @@ export default function Home() {
                   </div>
                   <div>
                     <h3 className="font-bold text-white">6. Winning and leaving</h3>
-                    <p>Villagers win when every Mafia player is eliminated. Mafia wins when Mafia equals or outnumbers the living villagers. If a Mafia player or the moderator quits, the game ends immediately. Any player can quit after confirming.</p>
+                    <p>Villagers win when the Mafia player is eliminated. Mafia wins when the Mafia player equals or outnumbers the living villagers. If the Mafia player or the moderator quits, the game ends immediately. Any player can quit after confirming.</p>
                   </div>
                 </div>
               </div>
@@ -653,20 +647,6 @@ export default function Home() {
             <div className="rounded-3xl border border-amber-400/20 bg-slate-900/70 p-5 shadow-[0_18px_50px_rgba(15,23,42,0.45)] backdrop-blur-sm transition-all duration-500 hover:border-amber-400/45 hover:shadow-[0_18px_60px_rgba(251,191,36,0.08)] sm:p-6">
               <h2 className="text-2xl font-bold text-white">Create a room</h2>
               <form onSubmit={createRoom} className="mt-6 space-y-5">
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-200">Number of mafia</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={10}
-                    inputMode="numeric"
-                    value={mafiaCount}
-                    onChange={(event) => setMafiaCount(Number(event.target.value) || 1)}
-                    className="w-full rounded-2xl border border-slate-700 bg-slate-950/70 px-4 py-3 text-white outline-none transition duration-200 focus:border-amber-400 focus:ring-2 focus:ring-amber-500/30"
-                  />
-                  {fieldErrors.mafiaCount ? <p className="mt-2 text-sm text-red-300">{fieldErrors.mafiaCount}</p> : null}
-                </div>
-
                 <div>
                   <label className="mb-2 block text-sm font-medium text-slate-200">Your name</label>
                   <input
@@ -1131,9 +1111,6 @@ export default function Home() {
                             <p className="mt-1 text-2xl font-black text-white">
                               {godIsViewing ? "God sees everyone" : currentPlayer.role === "mafia" ? "Mafia" : "Villager"}
                             </p>
-                            <p className="mt-1 text-sm text-slate-300">
-                              {game.mafiaCount} Mafia player{game.mafiaCount === 1 ? "" : "s"} are in this game.
-                            </p>
                           </div>
                         </div>
                         {!godIsViewing && currentPlayer.role === "mafia" && game.phase === "mafia-turn" ? (
@@ -1191,14 +1168,6 @@ export default function Home() {
                   {game.winner ? (
                     <div className="rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-4 text-emerald-100">
                       {game.winner === "mafia" ? "Mafia wins the night." : "Villagers win the town."}
-                    </div>
-                  ) : null}
-
-                  {currentPlayer?.role === "mafia" &&
-                  game.phase === "mafia-turn" &&
-                  game.mafiaVotesByPlayer?.[currentPlayer.name] ? (
-                    <div className="rounded-2xl border border-red-400/30 bg-red-500/10 p-4 text-red-100">
-                      Your target is submitted. Waiting for the other Mafia players.
                     </div>
                   ) : null}
 

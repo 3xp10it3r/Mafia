@@ -38,7 +38,6 @@ export async function POST(request: Request) {
     if (action === "create") {
       const room = createGame({
         mode: "without-god",
-        mafiaCount: payload.mafiaCount,
         moderatorName: payload.moderatorName,
         players: Array.isArray(payload.players) ? payload.players : [],
         password: payload.password,

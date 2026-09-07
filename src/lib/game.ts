@@ -21,7 +21,6 @@ export interface GameState {
   code: string;
   roomName: string;
   mode: GameMode;
-  mafiaCount: number;
   players: PlayerState[];
   phase: GamePhase;
   round: number;
@@ -30,7 +29,6 @@ export interface GameState {
   temporaryModerator: string | null;
   votesByPlayer: Record<string, string>;
   votedPlayers: string[];
-  mafiaVotesByPlayer: Record<string, string>;
   pendingKillTarget: string | null;
   log: string[];
   mafiaChat: MafiaChatMessage[];
@@ -67,15 +65,13 @@ export function randomRoomName(): string {
   return ROOM_NAMES[Math.floor(Math.random() * ROOM_NAMES.length)] ?? "The Velvet Dagger";
 }
 
-export function buildRoles(names: string[], mafiaCount: number): PlayerState[] {
+export function buildRoles(names: string[]): PlayerState[] {
   const uniqueNames = Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));
-  const mafiaSlots = new Set(
-    shuffle(uniqueNames.map((_, index) => index)).slice(0, Math.max(1, Math.min(mafiaCount, uniqueNames.length - 1))),
-  );
+  const mafiaIndex = uniqueNames.length > 1 ? shuffle(uniqueNames.map((_, index) => index))[0] : undefined;
 
   return uniqueNames.map((name, index) => ({
     name,
-    role: mafiaSlots.has(index) ? "mafia" : "villager",
+    role: index === mafiaIndex ? "mafia" : "villager",
     isAlive: true,
     avatar: AVATAR_POOL[index % AVATAR_POOL.length],
   }));

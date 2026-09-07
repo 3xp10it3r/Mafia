@@ -31,6 +31,13 @@ const winnerBadgeLabel = {
   villager: "Town Victory",
 };
 
+function phaseLabel(phase: GameState["phase"]): "WAITING" | "NIGHT" | "DAY" | "COMPLETED" {
+  if (phase === "lobby") return "WAITING";
+  if (phase === "mafia-turn") return "NIGHT";
+  if (phase === "village-vote") return "DAY";
+  return "COMPLETED";
+}
+
 export default function Home() {
   const [roomPassword, setRoomPassword] = useState("");
   const [joinPassword, setJoinPassword] = useState("");
@@ -189,10 +196,10 @@ export default function Home() {
   const canDeclareInnocent = Boolean(
     game &&
       currentPlayer &&
-      game.physicalMode &&
-      currentPlayer.isAlive &&
-      currentPlayer.role === "villager" &&
-      game.phase === "mafia-turn" &&
+    currentPlayer.isAlive &&
+    currentPlayer.role === "villager" &&
+    game.phase === "mafia-turn" &&
+    !game.hasDeclaredInnocent &&
       game.winner === null,
   );
 
@@ -389,12 +396,15 @@ export default function Home() {
     setFieldErrors({});
   }
 
-  async function runAction(action: "mafia-kill" | "village-vote" | "restart" | "start-game" | "transfer-moderator", targetOverride?: string) {
+  async function runAction(
+    action: "mafia-kill" | "declare-innocent" | "village-suspect" | "village-vote" | "restart" | "start-game" | "transfer-moderator",
+    targetOverride?: string,
+  ) {
     if (!game || !currentPlayer) {
       return;
     }
 
-    if (action !== "restart" && action !== "start-game" && action !== "transfer-moderator") {
+    if (action === "mafia-kill" || action === "village-suspect" || action === "village-vote" || action === "transfer-moderator") {
       const actionTarget = targetOverride ?? targetChoice;
       if (!actionTarget) {
         setNotice("Select a valid target before taking action.");
@@ -409,7 +419,7 @@ export default function Home() {
       roomCode: game.code,
     };
 
-    if (action === "mafia-kill" || action === "village-vote" || action === "transfer-moderator") {
+    if (action === "mafia-kill" || action === "village-suspect" || action === "village-vote" || action === "transfer-moderator") {
       body.target = targetOverride ?? targetChoice;
     }
 
@@ -450,10 +460,10 @@ export default function Home() {
           : action === "transfer-moderator"
             ? `Moderator rights transferred to ${targetOverride}.`
           : action === "mafia-kill"
-            ? `${currentPlayer.name} targeted ${targetOverride ?? targetChoice}.`
-            : action === "village-vote" && targetOverride === currentPlayer.name
-              ? `${currentPlayer.name} declared they are innocent.`
-            : `${currentPlayer.name} voted against ${targetOverride ?? targetChoice}.`,
+              ? "Mafia target recorded. Waiting for the living villagers."
+              : action === "declare-innocent"
+                ? "Your innocent declaration is recorded."
+                : `Your suspect selection is recorded.`,
     );
   }
 
@@ -486,7 +496,7 @@ export default function Home() {
       return "No active room";
     }
 
-    return `Round ${game.round} • ${game.mafiaAliveCount} mafia • ${game.villagerAliveCount} villagers • ${game.phase}`;
+    return `Round ${game.round}`;
   }, [game]);
 
   const filteredLobbyRooms = useMemo(() => {
@@ -510,12 +520,28 @@ export default function Home() {
   }, [lobbyRooms, roomFilterStatus, roomSearch]);
 
   const isNightPhase = game?.phase === "mafia-turn";
-  const mafiaAliveCount = game?.mafiaAliveCount ?? 0;
-  const villagerAliveCount = game?.villagerAliveCount ?? 0;
   const survivingPlayers = game ? game.players.filter((player) => player.isAlive).map((player) => player.name) : [];
   const winnerTone = game?.winner === "mafia" ? "mafia" : "villager";
-  const lastElimination = game && game.log.length > 0 ? game.log[0] : "No elimination logged yet";
-  const totalVotesCast = game?.votesCast ?? 0;
+  const innocentDeclarationsCount = game?.innocentDeclarationsCount ?? 0;
+  const livingVillagerCount = game?.livingVillagerCount ?? 0;
+  const privatePendingTarget = currentPlayer?.role === "mafia" ? game?.pendingKillTarget : null;
+  const playerProgress = !game
+    ? "WAITING"
+    : game.winner
+      ? "COMPLETED"
+      : game.phase === "lobby"
+      ? "WAITING"
+      : game.phase === "mafia-turn"
+        ? currentPlayer?.role === "mafia"
+          ? privatePendingTarget
+            ? "PENDING"
+            : "WAITING"
+          : game.hasDeclaredInnocent
+            ? "COMPLETED"
+            : "WAITING"
+        : game.votedPlayers.includes(currentPlayer?.name ?? "")
+          ? "COMPLETED"
+          : "WAITING";
   const mafiaNames = game?.revealedMafiaNames ?? [];
   const isModerator = Boolean(game && currentPlayer && game.temporaryModerator === currentPlayer.name);
 
@@ -572,7 +598,7 @@ export default function Home() {
                   </div>
                   <div>
                     <h3 className="font-bold text-white">3. Mafia turn</h3>
-                    <p>The Mafia player quietly touches the player they want to eliminate, then selects that player in the app. The selected player is removed and the village vote begins.</p>
+                    <p>The Mafia player quietly touches the player they want to eliminate, then selects that player in the app. The target stays pending while every living villager confirms they are innocent.</p>
                   </div>
                   <div>
                     <h3 className="font-bold text-white">4. Innocent check</h3>
@@ -781,7 +807,7 @@ export default function Home() {
                         <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-300">
                           <span className="rounded-full bg-slate-800 px-2 py-1">{room.mode === "with-god" ? "With God" : "Without God"}</span>
                           <span className="rounded-full bg-slate-800 px-2 py-1">{room.playerCount} players</span>
-                          <span className="rounded-full bg-slate-800 px-2 py-1">{room.phase}</span>
+                          <span className="rounded-full bg-slate-800 px-2 py-1">{phaseLabel(room.phase)}</span>
                           <span className="rounded-full bg-slate-800 px-2 py-1">{room.winner ? "Finished" : "Live"}</span>
                           {room.physicalMode ? (
                             <span className="rounded-full bg-amber-500/15 px-2 py-1 text-amber-100">Physical play</span>
@@ -799,7 +825,7 @@ export default function Home() {
                   <li>• Create a password-protected room and share its code with your friends.</li>
                   <li>• Everyone joins the lobby; the moderator starts once all players are ready.</li>
                   <li>• Roles are randomly assigned when the game starts and stay hidden.</li>
-                  <li>• Mafia secretly touches one player and records the target in the app.</li>
+                  <li>• Mafia secretly touches one player and records a pending target in the app.</li>
                   <li>• During the Mafia turn, villagers tap only <strong className="text-emerald-200">I&apos;m innocent</strong> on their own device view. This prevents villagers from seeing or guessing the Mafia when playing physically in the same room.</li>
                   <li>• The living players discuss and vote. The highest vote eliminates a player; ties mean nobody is eliminated.</li>
                   <li>• Villagers win by eliminating all Mafia. Mafia wins when they equal or outnumber the villagers.</li>
@@ -885,25 +911,20 @@ export default function Home() {
                       <div className="grid gap-3">
                         <div className="rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3">
                           <p className="text-[10px] uppercase tracking-[0.25em] text-red-200">Mafia alive</p>
-                          <p className="mt-2 text-3xl font-black text-red-100">{mafiaAliveCount}</p>
+                          <p className="mt-2 text-3xl font-black text-red-100">{game.phase === "game-over" ? game.mafiaAliveCount : "—"}</p>
                         </div>
                         <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3">
                           <p className="text-[10px] uppercase tracking-[0.25em] text-emerald-200">Villagers alive</p>
-                          <p className="mt-2 text-3xl font-black text-emerald-100">{villagerAliveCount}</p>
+                          <p className="mt-2 text-3xl font-black text-emerald-100">{game.phase === "game-over" ? game.villagerAliveCount : "—"}</p>
                         </div>
                         <div className="rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3">
                           <p className="text-[10px] uppercase tracking-[0.25em] text-slate-400">Votes cast</p>
-                          <p className="mt-2 text-3xl font-black text-white">{totalVotesCast}</p>
+                          <p className="mt-2 text-3xl font-black text-white">—</p>
                         </div>
                       </div>
                     </div>
 
                     <div className="grid gap-4 md:grid-cols-2">
-                      <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
-                        <p className="text-[10px] uppercase tracking-[0.3em] text-slate-400">Last elimination</p>
-                        <p className="mt-3 text-sm text-slate-200">{lastElimination}</p>
-                      </div>
-
                       <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
                         <p className="text-[10px] uppercase tracking-[0.3em] text-slate-400">Replay summary</p>
                         <div className="mt-3 flex flex-wrap gap-2">
@@ -953,7 +974,7 @@ export default function Home() {
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
                   <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Phase</p>
-                  <h2 className="mt-2 text-lg font-bold text-white sm:text-xl">{game.phase}</h2>
+                  <h2 className="mt-2 text-lg font-bold text-white sm:text-xl">{phaseLabel(game.phase)}</h2>
                 </div>
               </div>
             ) : null}
@@ -1012,13 +1033,21 @@ export default function Home() {
 
                 <div className="rounded-2xl border border-slate-700 bg-slate-950/80 px-4 py-3 text-sm text-slate-200">
                   {game.phase === "lobby"
-                    ? "Lobby phase – waiting for all players to join"
+                    ? "WAITING — the moderator will start when everyone is ready."
                     : isNightPhase
-                      ? "Night phase – mafia is choosing"
-                      : game.physicalMode
-                        ? "Day phase – villagers pick the innocent suspect"
-                        : "Day phase – village is voting"}
+                      ? "NIGHT — each living villager must confirm innocence before the target is completed."
+                      : "DAY — choose one living suspect."}
+                 </div>
+                 {game.phase !== "lobby" && !game.winner ? (
+                  <div className="rounded-2xl border border-sky-300/20 bg-sky-500/10 px-4 py-3 text-sm text-sky-100">
+                    Your status: <span className="font-black">{playerProgress}</span>
+                    {isNightPhase ? (
+                      <span className="ml-2 text-sky-200">
+                        ({innocentDeclarationsCount}/{livingVillagerCount} innocent)
+                      </span>
+                    ) : null}
                 </div>
+                ) : null}
 
                 {game.phase === "lobby" && currentPlayer && currentPlayer.name === game.temporaryModerator ? (
                   <button
@@ -1129,7 +1158,7 @@ export default function Home() {
                   {canDeclareInnocent ? (
                     <button
                       type="button"
-                      onClick={() => void runAction("village-vote", currentPlayer?.name)}
+                      onClick={() => void runAction("declare-innocent")}
                       disabled={isBusy}
                       className="w-full rounded-2xl border border-emerald-400/40 bg-emerald-500/15 px-4 py-3 font-bold text-emerald-100 shadow-lg shadow-emerald-950/20 disabled:opacity-60"
                     >
@@ -1141,7 +1170,7 @@ export default function Home() {
                     <div className="space-y-3">
                       <label className="block text-sm font-medium text-slate-200">Choose a target</label>
                       <select
-                        value={targetChoice}
+                        value={targetChoice || privatePendingTarget || ""}
                         onChange={(event) => setTargetChoice(event.target.value)}
                         className="w-full rounded-2xl border border-slate-700 bg-slate-950/80 px-4 py-3 text-white focus:border-red-400"
                       >
@@ -1187,7 +1216,7 @@ export default function Home() {
                   {canVote ? (
                     <div className="space-y-3">
                       <label className="block text-sm font-medium text-slate-200">
-                        {game.physicalMode ? "Choose the innocent suspect" : "Vote to eliminate"}
+                        Who do you suspect?
                       </label>
                       <select
                         value={targetChoice}
@@ -1203,11 +1232,11 @@ export default function Home() {
                       </select>
                       <button
                         type="button"
-                        onClick={() => void runAction("village-vote")}
+                        onClick={() => void runAction("village-suspect")}
                         disabled={isBusy || !targetChoice}
                         className="w-full rounded-2xl bg-gradient-to-r from-amber-400 to-yellow-500 px-4 py-3 font-bold text-slate-950 shadow-lg shadow-amber-900/30 disabled:opacity-60"
                       >
-                        {game.physicalMode ? "Confirm innocent pick" : "Cast village vote"}
+                        Suspect selected player
                       </button>
                     </div>
                   ) : null}
@@ -1224,10 +1253,17 @@ export default function Home() {
                 </div>
 
                 <div className="mt-6 rounded-2xl border border-slate-700 bg-slate-950/60 p-4">
-                  <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Current vote</p>
+                  <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Round progress</p>
                   <p className="mt-3 text-lg font-semibold text-white">
-                    {game.pendingKillTarget ? `Pending mafia target: ${game.pendingKillTarget}` : "No pending mafia target."}
+                    {isNightPhase
+                      ? `${innocentDeclarationsCount} of ${livingVillagerCount} living villagers are complete.`
+                      : currentPlayer && game.votedPlayers.includes(currentPlayer.name)
+                        ? "Your suspicion has been recorded. Waiting for the other players."
+                        : "Choose one living suspect."}
                   </p>
+                  {privatePendingTarget ? (
+                    <p className="mt-2 text-sm text-amber-200">Your target is pending completion.</p>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -1277,21 +1313,6 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 sm:p-6">
-              <h3 className="text-xl font-bold text-white">Game log</h3>
-              <div className="mt-4 space-y-3">
-                {game.log
-  .filter((entry) => !entry.toLowerCase().includes("innocent"))
-  .map((entry, index) => (
-    <div
-      key={`${entry}-${index}`}
-      className="rounded-2xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-sm text-slate-300"
-    >
-      {entry}
-    </div>
-  ))}
-              </div>
-            </div>
           </section>
         )}
       </div>

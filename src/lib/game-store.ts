@@ -92,6 +92,10 @@ function normalizeStoredRoom(raw: GameState & { password?: string | null; passwo
     villagerAliveCount: raw.villagerAliveCount ?? raw.players.filter((player) => player.role === "villager" && player.isAlive).length,
     votesCast: raw.votesCast ?? Object.keys(raw.votesByPlayer ?? {}).length,
     revealedMafiaNames: raw.revealedMafiaNames ?? [],
+    innocentDeclarations: raw.innocentDeclarations ?? [],
+    innocentDeclarationsCount: raw.innocentDeclarationsCount ?? 0,
+    livingVillagerCount: raw.livingVillagerCount ?? raw.players.filter((player) => player.role === "villager" && player.isAlive).length,
+    hasDeclaredInnocent: raw.hasDeclaredInnocent ?? false,
   } as StoredGameState;
   delete (room as GameState & { password?: string }).password;
   if (legacyPassword) {
@@ -112,17 +116,27 @@ if (process.env.NEXT_PHASE !== "phase-production-build") {
 
 export function projectGame(room: StoredGameState, viewerName: string): GameState {
   const revealRoles = room.phase === "game-over" || (room.mode === "with-god" && viewerName === room.godName);
+  const viewer = room.players.find((player) => player.name === viewerName);
+  const canSeePendingTarget = viewer?.role === "mafia" || (room.mode === "with-god" && viewerName === room.godName);
   const { passwordHash, ...publicRoom } = cloneRoom(room);
   void passwordHash;
   return {
     ...publicRoom,
+    mafiaAliveCount: revealRoles ? room.mafiaAliveCount : 0,
+    villagerAliveCount: room.phase === "game-over" || revealRoles ? room.villagerAliveCount : 0,
+    votesCast: 0,
     players: room.players.map((player) => ({
       ...player,
       role: revealRoles || player.name === viewerName ? player.role : null,
     })),
     votesByPlayer: {},
     votedPlayers: room.votedPlayers.includes(viewerName) ? [viewerName] : [],
-    pendingKillTarget: null,
+    pendingKillTarget: canSeePendingTarget ? room.pendingKillTarget : null,
+    innocentDeclarations: [],
+    innocentDeclarationsCount: room.innocentDeclarationsCount,
+    livingVillagerCount: room.livingVillagerCount,
+    hasDeclaredInnocent: room.innocentDeclarations.includes(viewerName),
+    log: [],
     mafiaChat: [],
     revealedMafiaNames: revealRoles ? room.players.filter((player) => player.role === "mafia").map((player) => player.name) : [],
   };
@@ -230,8 +244,14 @@ export function deletePlayerSession(token: string | undefined): void {
 }
 
 function updateCounts(room: StoredGameState): void {
+  room.innocentDeclarations = room.innocentDeclarations.filter((name, index, declarations) => {
+    const player = room.players.find((entry) => entry.name === name);
+    return Boolean(player?.isAlive && player.role === "villager") && declarations.indexOf(name) === index;
+  });
   room.mafiaAliveCount = getMafiaAlive(room).length;
   room.villagerAliveCount = getVillagerAlive(room).length;
+  room.livingVillagerCount = room.villagerAliveCount;
+  room.innocentDeclarationsCount = room.innocentDeclarations.length;
   room.votesCast = Object.keys(room.votesByPlayer).length;
 }
 
@@ -290,6 +310,7 @@ export function createGame({
     votesByPlayer: {},
     votedPlayers: [],
     pendingKillTarget: null,
+    innocentDeclarations: [],
     log: [
       `${generatedRoomName} is waiting for players.`,
       mode === "with-god" ? `${creatorName} is the God moderator.` : `${creatorName} is the temporary moderator for this room.`,
@@ -301,6 +322,9 @@ export function createGame({
     updatedAt: now,
     mafiaAliveCount: 0,
     villagerAliveCount: playerList.length,
+    livingVillagerCount: playerList.length,
+    innocentDeclarationsCount: 0,
+    hasDeclaredInnocent: false,
     votesCast: 0,
     revealedMafiaNames: [],
   };
@@ -331,6 +355,7 @@ function finishRound(room: GameState): void {
   room.votesByPlayer = {};
   room.votedPlayers = [];
   room.pendingKillTarget = null;
+  room.innocentDeclarations = [];
 }
 
 function updateWinnerState(room: GameState): boolean {
@@ -374,6 +399,7 @@ function resolveVotes(room: GameState): void {
     room.votesByPlayer = {};
     room.votedPlayers = [];
     room.pendingKillTarget = null;
+    room.innocentDeclarations = [];
     room.log.unshift("No clear elimination happened this round.");
     return;
   }
@@ -385,6 +411,7 @@ function resolveVotes(room: GameState): void {
     room.votesByPlayer = {};
     room.votedPlayers = [];
     room.pendingKillTarget = null;
+    room.innocentDeclarations = [];
     room.log.unshift("The vote ended in a tie, so no one was eliminated.");
     return;
   }
@@ -406,8 +433,35 @@ function resolveVotes(room: GameState): void {
   room.votesByPlayer = {};
   room.votedPlayers = [];
   room.pendingKillTarget = null;
+  room.innocentDeclarations = [];
 
   finishRound(room);
+}
+
+/**
+ * A mafia target is only committed after every living villager has acknowledged
+ * the physical action. The acknowledgement names stay server-side; projections
+ * expose only the aggregate count.
+ */
+function resolvePendingKill(room: StoredGameState): void {
+  if (!room.pendingKillTarget) return;
+
+  const livingVillagers = getVillagerAlive(room);
+  const allVillagersDeclared = livingVillagers.every((player) => room.innocentDeclarations.includes(player.name));
+  if (!allVillagersDeclared) return;
+
+  const target = room.players.find((player) => player.name === room.pendingKillTarget);
+  room.pendingKillTarget = null;
+  room.innocentDeclarations = [];
+
+  if (target?.isAlive && target.role === "villager") {
+    target.isAlive = false;
+    target.wasEliminated = true;
+  }
+
+  if (!updateWinnerState(room)) {
+    room.phase = "village-vote";
+  }
 }
 
 export function joinPlayerToRoom(roomCode: string, playerName: string): StoredGameState {
@@ -467,12 +521,21 @@ export function leavePlayerFromRoom(roomCode: string, playerName: string): Store
   const nextRoom: StoredGameState = {
     ...room,
     players: remainingPlayers,
+    votesByPlayer: Object.fromEntries(
+      Object.entries(room.votesByPlayer).filter(([voter]) => remainingPlayers.some((entry) => entry.name === voter)),
+    ),
+    votedPlayers: room.votedPlayers.filter((voter) => remainingPlayers.some((entry) => entry.name === voter)),
     temporaryModerator: room.temporaryModerator === player.name ? remainingPlayers[0]?.name ?? null : room.temporaryModerator,
     log: [...room.log, `${player.name} left the room.`],
     updatedAt: new Date().toISOString(),
   };
 
   if (nextRoom.phase !== "lobby" && player.role === "villager") {
+    if (nextRoom.phase === "mafia-turn") {
+      resolvePendingKill(nextRoom);
+    } else if (nextRoom.phase === "village-vote" && nextRoom.votedPlayers.length >= getLivingPlayers(nextRoom).length) {
+      resolveVotes(nextRoom);
+    }
     updateWinnerState(nextRoom);
   }
 
@@ -489,7 +552,14 @@ export function applyAction({
 }: {
   roomId?: string;
   roomCode?: string;
-  action: "mafia-kill" | "village-vote" | "restart" | "start-game" | "transfer-moderator";
+  action:
+    | "mafia-kill"
+    | "declare-innocent"
+    | "village-suspect"
+    | "village-vote"
+    | "restart"
+    | "start-game"
+    | "transfer-moderator";
   actor?: string;
   target?: string;
 }): StoredGameState {
@@ -532,6 +602,7 @@ export function applyAction({
       votesByPlayer: {},
       votedPlayers: [],
       pendingKillTarget: null,
+      innocentDeclarations: [],
       log: [
         `${room.roomName} has been reset. A new game is ready.`,
         room.mode === "with-god" ? `${room.godName ?? names[0]} remains the God moderator.` : `${room.temporaryModerator ?? names[0]} returns as a regular player.`,
@@ -568,6 +639,7 @@ export function applyAction({
     room.votesByPlayer = {};
     room.votedPlayers = [];
     room.pendingKillTarget = null;
+    room.innocentDeclarations = [];
     room.log = [
       `${room.roomName} has started. Roles are now in play.`,
       room.mode === "with-god" ? `${room.godName ?? room.players[0]?.name ?? "Moderator"} can observe every role.` : "No permanent moderator has special powers during the game.",
@@ -599,58 +671,54 @@ export function applyAction({
       throw new Error("A mafia player cannot target themselves.");
     }
 
-    targetPlayer.isAlive = false;
-    targetPlayer.wasEliminated = true;
-    room.pendingKillTarget = null;
-    room.log.unshift(`${targetPlayer.name} was eliminated by the mafia.`);
-    if (!updateWinnerState(room)) {
-      room.phase = "village-vote";
-    }
+    room.pendingKillTarget = targetPlayer.name;
+    resolvePendingKill(room);
     room.updatedAt = new Date().toISOString();
     return upsertRoom(room);
   }
 
-  if (action === "village-vote") {
-    if (!actor || !target) {
-      throw new Error("A voter and target are required.");
+  if (action === "declare-innocent") {
+    if (!actor || room.phase !== "mafia-turn") {
+      throw new Error("Innocent declarations are only open during the night.");
     }
-    const physicalInnocentDeclaration = room.physicalMode && room.phase === "mafia-turn";
-    if (room.phase !== "village-vote" && !physicalInnocentDeclaration) {
-      throw new Error("Voting is only open during the village vote phase.");
+    const player = room.players.find((entry) => entry.name === actor);
+    if (!player || !player.isAlive) {
+      throw new Error("Only living villagers can declare themselves innocent.");
+    }
+    if (player.role !== "villager") {
+      throw new Error("Only living villagers can declare themselves innocent.");
+    }
+    if (room.innocentDeclarations.includes(player.name)) {
+      throw new Error("This villager has already declared innocent.");
+    }
+    room.innocentDeclarations.push(player.name);
+    resolvePendingKill(room);
+    room.updatedAt = new Date().toISOString();
+    return upsertRoom(room);
+  }
+
+  if (action === "village-suspect" || action === "village-vote") {
+    if (!actor || !target) {
+      throw new Error("A voter and suspect are required.");
+    }
+    if (room.phase !== "village-vote") {
+      throw new Error("Suspect selection is only open during the day.");
     }
 
     const player = room.players.find((entry) => entry.name === actor);
     const targetPlayer = room.players.find((entry) => entry.name === target);
-
     if (!player || !player.isAlive) {
-      throw new Error("Only alive players can vote.");
+      throw new Error("Only living players can select a suspect.");
     }
-
-    if (!targetPlayer || !targetPlayer.isAlive) {
-      throw new Error("The vote target must be alive.");
+    if (!targetPlayer || !targetPlayer.isAlive || targetPlayer.name === actor) {
+      throw new Error("Choose another living player as the suspect.");
     }
-
-    if (actor === target && !physicalInnocentDeclaration) {
-      throw new Error("A player cannot vote for themselves.");
+    if (room.votedPlayers.includes(actor)) {
+      throw new Error("This player has already selected a suspect.");
     }
-
-    if (!physicalInnocentDeclaration && room.votedPlayers.includes(actor)) {
-      throw new Error("This player has already voted in this round.");
-    }
-
-    if (physicalInnocentDeclaration) {
-      if (player.role !== "villager" || target !== actor) {
-        throw new Error("Only villagers can declare themselves innocent.");
-      }
-      room.log.unshift(`${actor} declared themselves innocent.`);
-      room.updatedAt = new Date().toISOString();
-      return upsertRoom(room);
-    }
-
     room.votesByPlayer[actor] = target;
     room.votedPlayers.push(actor);
     room.updatedAt = new Date().toISOString();
-    room.log.unshift(`${actor} voted to eliminate ${target}.`);
 
     const totalAlivePlayers = getLivingPlayers(room).length;
     if (room.votedPlayers.length >= totalAlivePlayers) {

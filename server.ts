@@ -73,12 +73,19 @@ app.prepare().then(() => {
           if (!activeSession || !validRoomCode(code) || activeSession.roomCode !== code || socket.data.roomCode !== code) {
             throw new Error("This socket is not authorized for that room action.");
           }
-          if (!["mafia-kill", "village-vote", "restart", "start-game", "transfer-moderator"].includes(payload.action ?? "")) {
+          if (!["mafia-kill", "declare-innocent", "village-suspect", "village-vote", "restart", "start-game", "transfer-moderator"].includes(payload.action ?? "")) {
             throw new Error("Unsupported action.");
           }
           const nextRoom = applyAction({
             roomCode: code,
-            action: payload.action as "mafia-kill" | "village-vote" | "restart" | "start-game" | "transfer-moderator",
+            action: payload.action as
+              | "mafia-kill"
+              | "declare-innocent"
+              | "village-suspect"
+              | "village-vote"
+              | "restart"
+              | "start-game"
+              | "transfer-moderator",
             actor: activeSession.playerName,
             target: validName(payload.target) ? payload.target.trim() : undefined,
           });

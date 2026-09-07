@@ -32,6 +32,7 @@ export interface GameState {
   votesByPlayer: Record<string, string>;
   votedPlayers: string[];
   pendingKillTarget: string | null;
+  innocentDeclarations: string[];
   log: string[];
   mafiaChat: MafiaChatMessage[];
   physicalMode: boolean;
@@ -39,6 +40,9 @@ export interface GameState {
   updatedAt: string;
   mafiaAliveCount: number;
   villagerAliveCount: number;
+  innocentDeclarationsCount: number;
+  livingVillagerCount: number;
+  hasDeclaredInnocent: boolean;
   votesCast: number;
   revealedMafiaNames: string[];
 }

@@ -128,9 +128,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ closed: true }, { headers: noStore });
     }
 
-    if (["mafia-kill", "village-vote", "restart", "start-game", "transfer-moderator"].includes(action)) {
+    if (["mafia-kill", "declare-innocent", "village-suspect", "village-vote", "restart", "start-game", "transfer-moderator"].includes(action)) {
       const nextRoom = applyAction({
-        action: action as "mafia-kill" | "village-vote" | "restart" | "start-game" | "transfer-moderator",
+        action: action as
+          | "mafia-kill"
+          | "declare-innocent"
+          | "village-suspect"
+          | "village-vote"
+          | "restart"
+          | "start-game"
+          | "transfer-moderator",
         roomCode: room.code,
         actor: session.playerName,
         target: validName(payload.target) ? payload.target.trim() : undefined,

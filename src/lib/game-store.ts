@@ -118,10 +118,19 @@ export function projectGame(room: StoredGameState, viewerName: string): GameStat
   const revealRoles = room.phase === "game-over" || (room.mode === "with-god" && viewerName === room.godName);
   const viewer = room.players.find((player) => player.name === viewerName);
   const canSeePendingTarget = viewer?.role === "mafia" || (room.mode === "with-god" && viewerName === room.godName);
-  const { passwordHash, ...publicRoom } = cloneRoom(room);
-  void passwordHash;
   return {
-    ...publicRoom,
+    id: room.id,
+    code: room.code,
+    roomName: room.roomName,
+    mode: room.mode,
+    phase: room.phase,
+    round: room.round,
+    winner: room.winner,
+    godName: room.godName,
+    temporaryModerator: room.temporaryModerator,
+    physicalMode: room.physicalMode,
+    createdAt: room.createdAt,
+    updatedAt: room.updatedAt,
     mafiaAliveCount: revealRoles ? room.mafiaAliveCount : 0,
     villagerAliveCount: room.phase === "game-over" || revealRoles ? room.villagerAliveCount : 0,
     votesCast: 0,
